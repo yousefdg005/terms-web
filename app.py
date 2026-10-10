@@ -288,7 +288,8 @@ Strict Rules:
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        time.sleep(2.0)
+                        # زيادة مهلة الانتظار الأساسية بين كل طلب وآخر إلى 12 ثانية
+                        time.sleep(12.0)
                         
                         response = client.chat.completions.create(
                             model=model_name,
@@ -328,8 +329,9 @@ Strict Rules:
                     except Exception as e:
                         if "429" in str(e):
                             if attempt < max_retries - 1:
-                                status_text.text(f"⏳ تجاوز الحد المؤقت.. انتظار 8 ثوانٍ لإعادة محاولة الوحدة {i+1}...")
-                                time.sleep(8.0)
+                                # في حال رفض الخادم الطلب، ينتظر 15 ثانية كاملة قبل إعادة المحاولة
+                                status_text.text(f"⏳ تجاوز الحد المؤقت.. انتظار 15 ثانية لإعادة محاولة الوحدة {i+1}...")
+                                time.sleep(15.0)
                             else:
                                 st.warning(f"تجاوز الحد المسموح للوحدة {i+1} بعد عدة محاولات.")
                         else:

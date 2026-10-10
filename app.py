@@ -339,7 +339,7 @@ for i, (en_text, ar_text) in enumerate(aligned_units):
 
                 progress_bar.progress((i + 1) / len(aligned_units))
 
-            status_text.text("✅ اكتملت المعالجة بنجاح!")
+                status_text.text("✅ اكتملت المعالجة بنجاح!")
             
             if results:
                 df = pd.DataFrame(results)

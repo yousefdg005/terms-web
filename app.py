@@ -237,11 +237,10 @@ def generate_docx_bytes(df):
     doc.save(buffer)
     buffer.seek(0)
     return buffer
-
 # =========================================================
-# 7. واجهة التفاعل ورفع الملفات
+# 7. واجهة التفاعل ورفع الملفات ومعالجتها
 # =========================================================
-uploaded_file = st.file_uploader("📂 اختر ملف tmx", type=["tmx"])
+uploaded_file = st.file_uploader("📂 اختر ملف الذاكرة الترجمية (.tmx) للبدء:", type=["tmx"])
 
 if uploaded_file is not None:
     if not api_key.strip():
@@ -281,14 +280,14 @@ Strict Rules:
             seen_terms = set()
             progress_bar = st.progress(0)
             status_text = st.empty()
-for i, (en_text, ar_text) in enumerate(aligned_units):
+
+            for i, (en_text, ar_text) in enumerate(aligned_units):
                 status_text.text(f"جاري معالجة الوحدة ({i+1}/{len(aligned_units)})...")
                 user_prompt = f"[EN]: {en_text}\n[AR]: {ar_text}"
                 
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        # مهلة انتظار أساسية بين الطلبات المتتالية
                         time.sleep(2.0)
                         
                         response = client.chat.completions.create(
@@ -324,7 +323,7 @@ for i, (en_text, ar_text) in enumerate(aligned_units):
                                             "Source EN": en_text,
                                             "Source AR": ar_text
                                         })
-                        break # تم النجاح، الخروج من حلقة المحاولات
+                        break
 
                     except Exception as e:
                         if "429" in str(e):
@@ -339,7 +338,7 @@ for i, (en_text, ar_text) in enumerate(aligned_units):
 
                 progress_bar.progress((i + 1) / len(aligned_units))
 
-                status_text.text("✅ اكتملت المعالجة بنجاح!")
+            status_text.text("✅ اكتملت المعالجة بنجاح!")
             
             if results:
                 df = pd.DataFrame(results)
@@ -374,7 +373,6 @@ for i, (en_text, ar_text) in enumerate(aligned_units):
                     )
             else:
                 st.error("لم يتم العثور على أي مصطلحات قانونية مستخرجة من الملف.")
-
 # =========================================================
 # 8. التذييل بأسفل الصفحة (Dark Mode Compatible)
 # =========================================================

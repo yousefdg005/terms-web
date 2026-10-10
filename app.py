@@ -281,48 +281,61 @@ Strict Rules:
             seen_terms = set()
             progress_bar = st.progress(0)
             status_text = st.empty()
-
-            for i, (en_text, ar_text) in enumerate(aligned_units):
+for i, (en_text, ar_text) in enumerate(aligned_units):
                 status_text.text(f"جاري معالجة الوحدة ({i+1}/{len(aligned_units)})...")
                 user_prompt = f"[EN]: {en_text}\n[AR]: {ar_text}"
                 
-                try:
-                    time.sleep(1.0)
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.0,
-                        response_format={"type": "json_object"}
-                    )
-                    
-                    content = response.choices[0].message.content
-                    raw = json.loads(content)
-                    data = raw.get("terms", []) if isinstance(raw, dict) else raw
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        # مهلة انتظار أساسية بين الطلبات المتتالية
+                        time.sleep(2.0)
+                        
+                        response = client.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            temperature=0.0,
+                            response_format={"type": "json_object"}
+                        )
+                        
+                        content = response.choices[0].message.content
+                        raw = json.loads(content)
+                        data = raw.get("terms", []) if isinstance(raw, dict) else raw
 
-                    if data:
-                        for item in data:
-                            if isinstance(item, dict) and "english_term" in item:
-                                en_term = str(item.get("english_term", "")).strip()
-                                ar_term = str(item.get("arabic_term", "")).strip()
-                                pos_val = str(item.get("pos", "تركيب اسمي مركب")).strip()
-                                ar_desc = sanitize_arabic_text(item.get("arabic_description", ""))
-                                
-                                term_key = (en_term.lower(), ar_term)
-                                if term_key not in seen_terms and en_term and ar_term:
-                                    seen_terms.add(term_key)
-                                    results.append({
-                                        "English Term": en_term,
-                                        "Arabic Term": ar_term,
-                                        "POS": pos_val,
-                                        "Arabic Description": ar_desc,
-                                        "Source EN": en_text,
-                                        "Source AR": ar_text
-                                    })
-                except Exception as e:
-                    st.warning(f"تنبيه أثناء معالجة الوحدة {i+1}: {e}")
+                        if data:
+                            for item in data:
+                                if isinstance(item, dict) and "english_term" in item:
+                                    en_term = str(item.get("english_term", "")).strip()
+                                    ar_term = str(item.get("arabic_term", "")).strip()
+                                    pos_val = str(item.get("pos", "تركيب اسمي مركب")).strip()
+                                    ar_desc = sanitize_arabic_text(item.get("arabic_description", ""))
+                                    
+                                    term_key = (en_term.lower(), ar_term)
+                                    if term_key not in seen_terms and en_term and ar_term:
+                                        seen_terms.add(term_key)
+                                        results.append({
+                                            "English Term": en_term,
+                                            "Arabic Term": ar_term,
+                                            "POS": pos_val,
+                                            "Arabic Description": ar_desc,
+                                            "Source EN": en_text,
+                                            "Source AR": ar_text
+                                        })
+                        break # تم النجاح، الخروج من حلقة المحاولات
+
+                    except Exception as e:
+                        if "429" in str(e):
+                            if attempt < max_retries - 1:
+                                status_text.text(f"⏳ تجاوز الحد المؤقت.. انتظار 8 ثوانٍ لإعادة محاولة الوحدة {i+1}...")
+                                time.sleep(8.0)
+                            else:
+                                st.warning(f"تجاوز الحد المسموح للوحدة {i+1} بعد عدة محاولات.")
+                        else:
+                            st.warning(f"تنبيه أثناء معالجة الوحدة {i+1}: {e}")
+                            break
 
                 progress_bar.progress((i + 1) / len(aligned_units))
 

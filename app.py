@@ -457,7 +457,7 @@ with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
 excel_buffer.seek(0)
 
   # تجهيز التنزيل لـ Word
-  docx_buffer = generate_docx_bytes(df)
+docx_buffer = generate_docx_bytes(df)
 
   col1, col2 = st.columns(2)
   with col1:

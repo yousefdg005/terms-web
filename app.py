@@ -19,8 +19,8 @@ import streamlit as st
 # 1. إعدادات صفحة Streamlit (يجب أن تكون أول دالة تنفيذياً)
 # =========================================================
 st.set_page_config(
-    page_title="مستخرج المصطلحات القانونية | المجمع القانوني الليبي",
-    page_icon="⚖️",
+    page_title="terms extractor",
+    page_icon="icon.png",  # أو ضع امتداد الملف الصحيح لديك مثل icon.jpg
     layout="wide",
     initial_sidebar_state="collapsed",  # جعل النافذة الجانبية مغلقة تلقائياً
 )
@@ -93,7 +93,7 @@ st.markdown(
 )
 
 # =========================================================
-# 5. الشريط الجانبي للإعدادات والنماذج المأجورة حصراً عبر OpenRouter
+# 5. الشريط الجانبي للإعدادات والنماذج
 # =========================================================
 st.sidebar.header("⚙️ إعدادات النظام")
 
@@ -116,7 +116,7 @@ api_key = st.sidebar.text_input(
     value="",
     type="password",
     placeholder="أدخل مفتاحك هنا (sk-or-v1-...)",
-    help="أدخل مفتاح OpenRouter المدفوع الخاص بك لتشغيل النموذج المختار.",
+    help="أدخل مفتاح OpenRouter الخاص بك لتشغيل النموذج اللغوي.",
 )
 
 st.sidebar.markdown("---")
@@ -148,6 +148,7 @@ selected_model_label = st.sidebar.selectbox(
 
 selected_model_id = PAID_MODELS_MAPPING[selected_model_label]
 st.sidebar.caption(f"النموذج النشط حالياً: `{selected_model_id}`")
+
 
 # =========================================================
 # 6. الدوال الأساسية المعالجة
@@ -288,7 +289,7 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
   if not api_key.strip():
     st.error(
-        '⚠️ يرجى إدخال مفتاح OpenRouter API Key الخاص بك في الشريط الجانبي لتفعيل'
+        '⚠️ يرجى إدخل مفتاح OpenRouter API Key الخاص بك في الشريط الجانبي لتفعيل'
         ' المنصة.'
     )
   else:
@@ -448,19 +449,18 @@ if st.session_state['results_df'] is not None:
       use_container_width=True,
   )
 
-  # تجهيز التنزيل لـ Excel
   # تجهيز التنزيل لـ Excel (مع استبعاد عمود POS)
-excel_buffer = io.BytesIO()
-excel_df = df.drop(columns=['POS'], errors='ignore')
-with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+  excel_buffer = io.BytesIO()
+  excel_df = df.drop(columns=['POS'], errors='ignore')
+  with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
     excel_df.to_excel(writer, index=False)
-excel_buffer.seek(0)
+  excel_buffer.seek(0)
 
   # تجهيز التنزيل لـ Word
-docx_buffer = generate_docx_bytes(df)
+  docx_buffer = generate_docx_bytes(df)
 
-col1, col2 = st.columns(2)
-with col1:
+  col1, col2 = st.columns(2)
+  with col1:
     st.download_button(
         label='📥 تنزيل قاعدة البيانات (Excel)',
         data=excel_buffer,

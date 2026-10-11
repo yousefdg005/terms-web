@@ -41,7 +41,7 @@ load_css("style.css")
 
 
 # =========================================================
-# 3. تحويل الصور المحلية إلى Base64 للهيدر
+# 3. تحويل الصور المحلية إلى Base64 للهيدر والخلفيات
 # =========================================================
 def get_image_base64(file_path):
   try:
@@ -54,6 +54,16 @@ def get_image_base64(file_path):
 
 depart_b64 = get_image_base64("depart.jpg")
 moma_b64 = get_image_base64("moma.jpg")
+
+# البحث التلقائي عن صورة الخلفية back بجميع الامتدادات
+back_b64 = ""
+back_mime = "image/png"
+for ext in ["png", "jpg", "jpeg", "webp"]:
+  b64_data = get_image_base64(f"back.{ext}")
+  if b64_data:
+    back_b64 = b64_data
+    back_mime = f"image/{'jpeg' if ext in ['jpg', 'jpeg'] else ext}"
+    break
 
 depart_img_tag = (
     f'<img src="data:image/jpeg;base64,{depart_b64}" class="header-logo"'
@@ -69,18 +79,26 @@ moma_img_tag = (
 )
 
 # =========================================================
-# 4. الهيدر الرئيسي المصمم بـ HTML العصري
+# 4. الهيدر الرئيسي المصمم بخلفية شفافة وعصرية
 # =========================================================
+bg_style = (
+    f"background: linear-gradient(135deg, rgba(15, 23, 42, 0.88), rgba(30, 41,"
+    f" 59, 0.88)), url('data:{back_mime};base64,{back_b64}'); background-size:"
+    " cover; background-position: center;"
+    if back_b64
+    else "background-color: #1E293B;"
+)
+
 st.markdown(
     f"""
-<div class="header-container">
+<div class="header-container" style="{bg_style} border-radius: 16px; padding: 25px; border: 1px solid rgba(234, 179, 8, 0.3); box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
     <div class="header-logo-wrapper">
         {depart_img_tag}
     </div>
     <div class="header-text">
-        <h1 style="color: #EAB308; margin: 0; font-size: 25px; font-weight: 700;">⚖️ منصة استخراج مسارد للمصطلحات القانونية وتوليد البطاقات الترجمية</h1>
-        <p style="color: #9CA3AF; font-size: 15px; margin-top: 8px; margin-bottom: 12px;">منصة ذكية متخصصة في أتمتة استخراج المصطلحات القانونية المصفاة المعتمدة لـ <b>المجمع القانوني الليبي</b> من ذاكرات الترجمة (<code>.tmx</code>)</p>
-        <span style="color: #E5E7EB; font-size: 14px; background: rgba(234, 179, 8, 0.1); padding: 5px 15px; border-radius: 20px; border: 1px solid rgba(234, 179, 8, 0.3);">
+        <h1 style="color: #EAB308; margin: 0; font-size: 25px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.7);">⚖️ منصة استخراج مسارد للمصطلحات القانونية وتوليد البطاقات الترجمية</h1>
+        <p style="color: #F3F4F6; font-size: 15px; margin-top: 8px; margin-bottom: 12px; text-shadow: 0 1px 3px rgba(0,0,0,0.8);">منصة ذكية متخصصة في أتمتة استخراج المصطلحات القانونية المصفاة المعتمدة لـ <b>المجمع القانوني الليبي</b> من ذاكرات الترجمة (<code>.tmx</code>)</p>
+        <span style="color: #E5E7EB; font-size: 14px; background: rgba(234, 179, 8, 0.15); padding: 6px 18px; border-radius: 20px; border: 1px solid rgba(234, 179, 8, 0.4); backdrop-filter: blur(4px);">
             🎓 إعداد وتطوير: <b>يوسف نورالدين</b>
         </span>
     </div>

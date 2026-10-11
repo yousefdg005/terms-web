@@ -460,7 +460,7 @@ excel_buffer.seek(0)
 docx_buffer = generate_docx_bytes(df)
 
 col1, col2 = st.columns(2)
-  with col1:
+with col1:
     st.download_button(
         label='📥 تنزيل قاعدة البيانات (Excel)',
         data=excel_buffer,

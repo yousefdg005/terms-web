@@ -121,23 +121,24 @@ api_key = st.sidebar.text_input(
 
 st.sidebar.markdown("---")
 
-# قائمة النماذج المأجورة المعتمدة حصراً للمنصة عبر OpenRouter
+# قائمة النماذج المعتمدة من OpenRouter (دعم قوي للعربية وتصفية دقيقة)
 PAID_MODELS_MAPPING = {
-    "🏛️ GPT-6 Luna Pro (استخراج صارم وتصفية دقيقة - OpenAI)": (
-        "openai/gpt-6-luna-pro"
+    "🌙 Qwen 3.5 Flash (الأقوى في معالجة اللغة العربية)": (
+        "qwen/qwen3.5-flash-02-23"
     ),
-    "📜 Claude Sonnet 4.6 (صياغة وتوصيف قانوني معتمد - Anthropic)": (
-        "anthropic/claude-sonnet-4.6"
+    "📜 Claude Haiku 5.5 (التزام صارم بتعليمات الاستبعاد والتصفية)": (
+        "anthropic/claude-haiku-5.5"
     ),
-    "⚡ Gemini 3.8 Flash (معالجة التشريعات الطويلة والمستندات - Google)": (
+    "⚡ Gemini 3.8 Flash (معالجة الملفات الطويلة وسياق 1M)": (
         "google/gemini-3.8-flash"
     ),
-    "⚖️ GPT-5.6 Luna (ترجمة وتحليل مصطلحي متوازن - OpenAI)": (
-        "openai/gpt-5.6-luna"
+    "⚖️ GPT-4o Mini (استخراج هيكلي دقيق وموثوق)": "openai/gpt-4o-mini",
+    "🦙 Llama 4 Maverick (نموذج مفتوح متقدم متعدد اللغات)": (
+        "meta-llama/llama-4-maverick"
     ),
 }
 
-st.sidebar.subheader("🤖 اختيار النموذج المأجور")
+st.sidebar.subheader("🤖 اختيار النموذج المراد استعماله")
 
 selected_model_label = st.sidebar.selectbox(
     "اختر النموذج لتنفيذ عملية التصفية والاستخراج:",
@@ -147,7 +148,6 @@ selected_model_label = st.sidebar.selectbox(
 
 selected_model_id = PAID_MODELS_MAPPING[selected_model_label]
 st.sidebar.caption(f"النموذج النشط حالياً: `{selected_model_id}`")
-
 
 # =========================================================
 # 6. الدوال الأساسية المعالجة

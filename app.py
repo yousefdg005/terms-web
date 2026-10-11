@@ -357,7 +357,7 @@ STRICT FILTERING & EXTRACTION RULES (قواعد التصفية الصارمة):
             f'جاري معالجة الوحدة ({i+1}/{len(aligned_units)})... عبر نموذج'
             f' `{selected_model_id}`'
         )
-        user_prompt = f'[EN]: {en_text}\n[AR]: {ar_text}'
+         user_prompt = f'[EN]: {en_text}\n[AR]: {ar_text}'
 
         max_retries = 3
         for attempt in range(max_retries):

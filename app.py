@@ -449,10 +449,12 @@ if st.session_state['results_df'] is not None:
   )
 
   # تجهيز التنزيل لـ Excel
-  excel_buffer = io.BytesIO()
-  with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-    df.to_excel(writer, index=False)
-  excel_buffer.seek(0)
+  # تجهيز التنزيل لـ Excel (مع استبعاد عمود POS)
+excel_buffer = io.BytesIO()
+excel_df = df.drop(columns=['POS'], errors='ignore')
+with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+    excel_df.to_excel(writer, index=False)
+excel_buffer.seek(0)
 
   # تجهيز التنزيل لـ Word
   docx_buffer = generate_docx_bytes(df)

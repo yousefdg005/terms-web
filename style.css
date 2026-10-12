@@ -1,14 +1,14 @@
-/* استيراد الخط العربي Tajawal */
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
+/* استيراد الخط العربي Tajawal و Cairo */
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Tajawal:wght@400;500;700&display=swap');
 
-/* 1. تطبيق الخط العربي على التطبيق بدون التأثير على أيقونات النظام */
+/* 1. تطبيق الخط العربي العام */
 .stApp, .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp label, .stApp button {
     background-color: #0B0F19 !important;
     color: #E5E7EB !important;
-    font-family: 'Tajawal', sans-serif !important;
+    font-family: 'Cairo', 'Tajawal', sans-serif !important;
 }
 
-/* 2. حماية خط أيقونات Streamlit الأصلية حتى لا تظهر كنصوص مثل double_arrow */
+/* 2. حماية خط أيقونات النظام */
 [class*="material-symbols"], 
 [class*="icon"], 
 .st-emotion-cache-1pxm82g, 
@@ -17,18 +17,18 @@ i {
     font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
 }
 
-/* 3. توجيه النصوص العربية داخل الشاشة */
+/* 3. محاذاة النصوص */
 .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp label, .stApp span, .stMarkdown {
     text-align: right;
 }
 
-/* 4. تصميم الشريط الجانبي (Sidebar) */
+/* 4. الشريط الجانبي */
 [data-testid="stSidebar"] {
     background-color: #111827 !important;
     border-left: 1px solid #1F2937 !important;
 }
 
-/* 5. تخصيص الأزرار باللون الذهبي */
+/* 5. الأزرار الذهبية */
 .stButton > button, .stDownloadButton > button {
     background: linear-gradient(135deg, #EAB308 0%, #CA8A04 100%) !important;
     color: #0F172A !important;
@@ -44,7 +44,7 @@ i {
     box-shadow: 0 4px 15px rgba(234, 179, 8, 0.4) !important;
 }
 
-/* 6. تخصيص حقول الإدخال والرفع */
+/* 6. حقول الإدخال والرفع */
 .stTextInput > div > div > input, [data-testid="stFileUploadDropzone"] {
     background-color: #111827 !important;
     color: #FFFFFF !important;
@@ -52,39 +52,18 @@ i {
     border-radius: 8px !important;
 }
 
-/* =========================================================
-   تنسيق الهيدر العصري والشعارين (Header Logos Design)
-   ========================================================= */
+/* 7. هيدر المنصة العصري */
 .header-container {
     display: flex;
     align-items: center;
     justify-content: space-between;
     background: linear-gradient(135deg, #131B2E 0%, #0F172A 100%);
-    padding: 20px 30px;
+    padding: 25px 30px;
     border-radius: 16px;
-    border: 1px solid #1E293B;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     margin-bottom: 25px;
     gap: 20px;
-}
-
-.header-logo-wrapper {
-    flex: 0 0 auto;
-}
-
-.header-logo {
-    width: 85px;
-    height: 85px;
-    object-fit: cover;
-    border-radius: 50%;
-    border: 2px solid #EAB308;
-    box-shadow: 0 0 15px rgba(234, 179, 8, 0.25);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-
-.header-logo:hover {
-    transform: scale(1.08);
-    box-shadow: 0 0 25px rgba(234, 179, 8, 0.5);
 }
 
 .header-text {
@@ -92,14 +71,18 @@ i {
     text-align: center;
 }
 
-@media (max-width: 768px) {
-    .header-container {
-        flex-direction: column;
-        text-align: center;
-        padding: 15px;
-    }
-    .header-logo {
-        width: 70px;
-        height: 70px;
-    }
+/* 8. بطاقات استوديو المحاذاة (Alignment Card Studio) */
+.alignment-box {
+    background: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+}
+.alignment-index {
+    color: #EAB308;
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 5px;
 }

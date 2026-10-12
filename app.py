@@ -163,17 +163,37 @@ def normalize_text(text):
 
 
 def _ocr_page(page, document_language="auto"):
-  """OCR بإعداد مناسب لتخطيط الصفحة واللغة، مع الحفاظ على دقة 300 DPI."""
-  pix = page.get_pixmap(dpi=OCR_DPI, colorspace=fitz.csGRAY)
+  """OCR متعدد المحاولات للعربية؛ يختار النتيجة وفق الحروف العربية وقلة الرموز العشوائية."""
+  # رفع الدقة يساعد على تمييز النقاط والحروف العربية الصغيرة.
+  pix = page.get_pixmap(dpi=400 if document_language == "ar" else OCR_DPI,
+                        colorspace=fitz.csGRAY)
   img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
 
-  # اختبارات ar22.pdf أظهرت أن PSM 6 أسقط أسطراً عربية كاملة،
-  # بينما PSM 11 التقط نص المادة الأولى وجملة تنفيذ القرار.
-  # نبقي PSM 6 للإنجليزية لأن استخراجه كان يعمل بصورة أفضل في ملف المستخدم.
-  psm = 11 if document_language == "ar" else 6
-  return pytesseract.image_to_string(
-      img, lang="ara+eng", config=f"--oem 1 --psm {psm}"
-  )
+  if document_language != "ar":
+    return pytesseract.image_to_string(img, lang="eng+ara", config="--oem 1 --psm 6")
+
+  # لا نفترض أن PSM 11 هو الأفضل لكل الصفحات. نجرب تخطيطات مختلفة.
+  candidates = []
+  for psm in (4, 6, 11):
+    try:
+      candidate = pytesseract.image_to_string(
+          img, lang="ara+eng", config=f"--oem 1 --psm {psm}"
+      )
+      arabic = len(re.findall(r"[\u0600-\u06FF]", candidate))
+      letters = len(re.findall(r"[A-Za-z\u0600-\u06FF]", candidate))
+      junk = len(re.findall(r"[^\w\s.,:؛،؟!()/%+\-]", candidate))
+      # الأولوية لعدد الحروف العربية، مع عقوبة للرموز غير المعتادة.
+      score = arabic * 3 + letters - junk * 2
+      candidates.append((score, candidate, psm, arabic, junk))
+    except Exception:
+      continue
+
+  if not candidates:
+    return ""
+  candidates.sort(key=lambda item: item[0], reverse=True)
+  best_score, best_text, best_psm, best_arabic, best_junk = candidates[0]
+  # لا ندمج النتائج الثلاث معًا كي لا تتكرر الفقرات.
+  return best_text
 
 
 @st.cache_data(show_spinner="⏳ جاري استخراج النص من الملف...")
@@ -232,7 +252,7 @@ def extract_text_from_pdf_bytes(data, document_language="auto"):
                         )
                     elif current_len < MIN_PAGE_CHARS:
                         txt = ocr_txt
-                        notes.append(f"صفحة {i+1}: قُرئت بالـ OCR")
+                        notes.append(f"صفحة {i+1}: قُرئت بالـ OCR؛ العربية تستخدم مقارنة PSM 4 و6 و11 بدقة 400 DPI")
                     elif has_images:
                         notes.append(
                             f"صفحة {i+1}: تحتوي صوراً؛ قورن OCR بالنص الرقمي "

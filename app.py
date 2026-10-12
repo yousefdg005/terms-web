@@ -23,7 +23,7 @@ import streamlit as st
 # 1. إعدادات صفحة Streamlit
 # =========================================================
 st.set_page_config(
-    page_title="General Legal Terminology Platform",
+    page_title="AI Legal Workspace",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -31,7 +31,7 @@ st.set_page_config(
 
 
 # =========================================================
-# 2. تحميل ملف ה- CSS
+# 2. تحميل ملف الـ CSS
 # =========================================================
 def load_css(file_name="style.css"):
   try:
@@ -60,12 +60,12 @@ def prepare_arabic_text(text):
 # =========================================================
 st.markdown(
     """
-<div class="header-container">
+<div class="header-container" style="direction: ltr; text-align: left;">
     <div class="header-text">
-        <h1 style="color: #EAB308; margin: 0; font-size: 26px; font-weight: 800;">⚖️ AI Legal workspace</h1>
-        <p style="color: #F3F4F6; font-size: 15px; margin-top: 8px; margin-bottom: 12px;"> YOUR all-in-one AI toolkit for legal text alignment, term extraction.</p>
+        <h1 style="color: #EAB308; margin: 0; font-size: 26px; font-weight: 800;">⚖️ AI Legal Workspace</h1>
+        <p style="color: #F3F4F6; font-size: 15px; margin-top: 8px; margin-bottom: 12px;">Your all-in-one AI toolkit for legal text alignment, term extraction</p>
         <span style="color: #E5E7EB; font-size: 13px; background: rgba(234, 179, 8, 0.15); padding: 6px 18px; border-radius: 20px; border: 1px solid rgba(234, 179, 8, 0.4);">
-                Next-Gen AI Engine  | Developed by  : <b> Yousef Elmogamez</b>
+                Smart AI Engine | Developed by Youssef Nour Eldin 💻
         </span>
     </div>
 </div>
@@ -536,7 +536,7 @@ def generate_pdf_cards_bytes(df):
 # 9. علامات التبويب الرئيسية (Tabs)
 # =========================================================
 tab1, tab2 = st.tabs(
-    ["🟢 استوديو التحويل والمحاذاة (Alignment Studio)", "🔵 الاستخراج الذكي (Terms Extractor)"]
+    ["Alignment Studio (beta)", "AI Term Extractor"]
 )
 
 
@@ -808,8 +808,7 @@ with tab2:
   st.subheader("🔍 استخراج المصطلحات عبر الذكاء الاصطناعي")
 
   uploaded_tmx = st.file_uploader(
-      "ارفع ملف الذاكرة (.tmx) المحاذى جاهزاً (أو استخدم المحاذاة من التبويب"
-      " الأول):",
+      "Upload your aligned .TMX memory file (or use alignment from Tab 1)",
       type=["tmx"],
   )
 

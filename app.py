@@ -132,13 +132,39 @@ if "results_df" not in st.session_state:
 # =========================================================
 # 7. دوال تحويل الـ PDF وقراءة الـ TMX
 # =========================================================
+import fitz  # PyMuPDF لقراءة الصور بسرعة عالية
+import pdfplumber
+import pytesseract
+from PIL import Image
+
+
 def extract_text_from_pdf(pdf_file):
   text = ""
-  with pdfplumber.open(pdf_file) as pdf:
-    for page in pdf.pages:
-      extracted = page.extract_text()
-      if extracted:
-        text += extracted + "\n"
+  try:
+    pdf_file.seek(0)
+    # 1. المحاولة الأولى: الاستخراج النصي الرقمي المباشر (PDFs العادية)
+    with pdfplumber.open(pdf_file) as pdf:
+      for page in pdf.pages:
+        extracted = page.extract_text()
+        if extracted and extracted.strip():
+          text += extracted + "\n"
+
+    # 2. المحاولة الثانية: إذا كان الملف صوري / Scanner ولم نجد نصاً
+    if not text.strip():
+      pdf_file.seek(0)
+      doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+      for page in doc:
+        pix = page.get_pixmap(dpi=150)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+        # تطبيق الـ OCR باللغتين العربية والإنجليزي
+        ocr_text = pytesseract.image_to_string(img, lang="ara+eng")
+        if ocr_text and ocr_text.strip():
+          text += ocr_text + "\n"
+
+  except Exception as e:
+    print(f"Error in hybrid PDF extraction: {e}")
+
   return text
 
 

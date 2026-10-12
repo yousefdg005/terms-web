@@ -378,7 +378,7 @@ tab1, tab2 = st.tabs(
 # Tab 1: تحويل PDF إلى Word ومحاذاة النصوص
 # ---------------------------------------------------------
 with tab1:
-  st.subheader("📄 الخطوة 1: رفع ملفات PDF وحساب النصوص")
+  st.subheader("📄 الخطوة 1: رفع ملفات PDF واستخراج النصوص")
 
   col_pdf1, col_pdf2 = st.columns(2)
   with col_pdf1:
@@ -394,73 +394,96 @@ with tab1:
     text_en = extract_text_from_pdf(pdf_en)
     text_ar = extract_text_from_pdf(pdf_ar)
 
-    st.success("تم استخراج النصوص بنجاح من الملفين!")
+    if text_en.strip() and text_ar.strip():
+      st.success("✅ تم استخراج النصوص بنجاح من الملفين!")
 
-    # خيار معاينة وتنزيل ملفات Word للتدقيق اليدوي
-    col_w1, col_w2 = st.columns(2)
-    with col_w1:
-      docx_en_bytes = create_docx_from_text(text_en)
-      st.download_button(
-          "📥 تنزيل النص الإنجليزي (Word Docx)",
-          data=docx_en_bytes,
-          file_name="Source_EN.docx",
-          mime=(
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          ),
-      )
-    with col_w2:
-      docx_ar_bytes = create_docx_from_text(text_ar)
-      st.download_button(
-          "📥 تنزيل النص العربي (Word Docx)",
-          data=docx_ar_bytes,
-          file_name="Target_AR.docx",
-          mime=(
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          ),
-      )
-
-    st.markdown("---")
-    st.subheader("🧩 الخطوة 2: استوديو المحاذاة اليدوية وتوليد TMX")
-
-    lines_en = [line.strip() for line in text_en.split("\n") if line.strip()]
-    lines_ar = [line.strip() for line in text_ar.split("\n") if line.strip()]
-
-    max_len = max(len(lines_en), len(lines_ar))
-    pairs_to_edit = []
-
-    st.caption(
-        "قم بمراجعة تقابل الجمل أدناه. يمكنك تعديل النصوص مباشرة لضمان تطابق"
-        " الدقة:"
-    )
-
-    for i in range(min(max_len, 30)):  # عرض أوائل الجمل للمحاذاة السلسة
-      en_val = lines_en[i] if i < len(lines_en) else ""
-      ar_val = lines_ar[i] if i < len(lines_ar) else ""
-
-      col_a1, col_a2 = st.columns(2)
-      with col_a1:
-        edit_en = st.text_area(
-            f"EN [{i+1}]", value=en_val, height=70, key=f"en_{i}"
+      # خيار معاينة وتنزيل ملفات Word للتدقيق اليدوي
+      col_w1, col_w2 = st.columns(2)
+      with col_w1:
+        docx_en_bytes = create_docx_from_text(text_en)
+        st.download_button(
+            "📥 تنزيل النص الإنجليزي (Word Docx)",
+            data=docx_en_bytes,
+            file_name="Source_EN.docx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
         )
-      with col_a2:
-        edit_ar = st.text_area(
-            f"AR [{i+1}]", value=ar_val, height=70, key=f"ar_{i}"
+      with col_w2:
+        docx_ar_bytes = create_docx_from_text(text_ar)
+        st.download_button(
+            "📥 تنزيل النص العربي (Word Docx)",
+            data=docx_ar_bytes,
+            file_name="Target_AR.docx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
         )
 
-      if edit_en.strip() and edit_ar.strip():
-        pairs_to_edit.append((edit_en.strip(), edit_ar.strip()))
+      st.markdown("---")
+      st.subheader("🧩 الخطوة 2: استوديو المحاذاة اليدوية وتوليد TMX")
 
-    if st.button("🚀 اعتماد المحاذاة وإنشاء ذاكرة TMX"):
-      st.session_state["aligned_pairs"] = pairs_to_edit
-      tmx_data = generate_tmx_file(pairs_to_edit)
-      st.success(
-          f"تم اعتماد {len(pairs_to_edit)} وحدة محاذات وتوليد ملف TMX جاهز!"
-      )
-      st.download_button(
-          "💾 تنزيل ملف الـ TMX الموحد",
-          data=tmx_data,
-          file_name="Aligned_Legal_Memory.tmx",
-          mime="application/x-tmx+xml",
+      lines_en = [line.strip() for line in text_en.split("\n") if line.strip()]
+      lines_ar = [line.strip() for line in text_ar.split("\n") if line.strip()]
+
+      # استخراج وتخزين الأسطر تلقائياً
+      aligned_pairs = []
+      max_len = max(len(lines_en), len(lines_ar))
+
+      st.caption("معاينة أزواج الجمل المستخرجة والمحاذاة آلياً:")
+
+      for i in range(max_len):
+        en_val = lines_en[i] if i < len(lines_en) else ""
+        ar_val = lines_ar[i] if i < len(lines_ar) else ""
+
+        if en_val and ar_val:
+          aligned_pairs.append((en_val, ar_val))
+
+        # عرض أول 15 جملة فقط لعدم إثقال الصفحة
+        if i < 15:
+          col_a1, col_a2 = st.columns(2)
+          with col_a1:
+            st.text_input(
+                f"إنجليزي [{i+1}]",
+                value=en_val,
+                key=f"show_en_{i}",
+                disabled=True,
+            )
+          with col_a2:
+            st.text_input(
+                f"عربي [{i+1}]",
+                value=ar_val,
+                key=f"show_ar_{i}",
+                disabled=True,
+            )
+
+      st.markdown("<br>", unsafe_allow_html=True)
+
+      if st.button("🚀 اعتماد المحاذاة وإنشاء ذاكرة TMX"):
+        if aligned_pairs:
+          st.session_state["aligned_pairs"] = aligned_pairs
+          tmx_data = generate_tmx_file(aligned_pairs)
+
+          st.success(
+              f"🎉 تم اعتماد **{len(aligned_pairs)}** وحدة محاذاة بنجاح وتوليد"
+              " ملف TMX ذو حجم حقيقي!"
+          )
+          st.download_button(
+              "💾 تنزيل ملف الـ TMX الموحد",
+              data=tmx_data,
+              file_name="Aligned_Legal_Memory.tmx",
+              mime="application/x-tmx+xml",
+          )
+          st.info(
+              "👉 **الانتقال المباشر:** انتقل الآن إلى **'التبويب الثاني"
+              " (الاستخراج الذكي)'** بدون الحاجة لرفع الملف من جديد!"
+          )
+        else:
+          st.error("⚠️ لم يتم العثور على أزواج جمل صالحة للتحويل.")
+    else:
+      st.error(
+          "⚠️ تعذر استخراج أي نصوص من ملفات الـ PDF المرفوعة. تأكد أن الملفات"
+          " تحتوي على نصوص قابلة للتحديد وليست صوراً مسحوبة بـ Scanner."
       )
 
 # ---------------------------------------------------------

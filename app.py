@@ -401,7 +401,7 @@ tab1, tab2 = st.tabs(
 )
 
 # ---------------------------------------------------------
-# Tab 1: تحويل PDF إلى Word ومحاذاة النصوص
+# Tab 1: تحويل PDF وتوفير استوديو المحاذاة المتقدم (MateCat Style)
 # ---------------------------------------------------------
 with tab1:
   st.subheader("📄 الخطوة 1: رفع ملفات PDF واستخراج النصوص")
@@ -421,79 +421,138 @@ with tab1:
     text_ar = extract_text_from_pdf(pdf_ar)
 
     if text_en.strip() and text_ar.strip():
-      st.success("✅ تم استخراج النصوص بنجاح من الملفين!")
+      st.success("✅ تم استخراج النصوص بنجاح!")
 
-      # خيار معاينة وتنزيل ملفات Word للتدقيق اليدوي
-      col_w1, col_w2 = st.columns(2)
-      with col_w1:
-        docx_en_bytes = create_docx_from_text(text_en)
-        st.download_button(
-            "📥 تنزيل النص الإنجليزي (Word Docx)",
-            data=docx_en_bytes,
-            file_name="Source_EN.docx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ),
-        )
-      with col_w2:
-        docx_ar_bytes = create_docx_from_text(text_ar)
-        st.download_button(
-            "📥 تنزيل النص العربي (Word Docx)",
-            data=docx_ar_bytes,
-            file_name="Target_AR.docx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ),
-        )
+      # تهيئة حالات القوائم في ذاكرة الجلسة
+      if "lines_en" not in st.session_state:
+        st.session_state["lines_en"] = [
+            line.strip() for line in text_en.split("\n") if line.strip()
+        ]
+      if "lines_ar" not in st.session_state:
+        st.session_state["lines_ar"] = [
+            line.strip() for line in text_ar.split("\n") if line.strip()
+        ]
 
       st.markdown("---")
-      st.subheader("🧩 الخطوة 2: استوديو المحاذاة اليدوية وتوليد TMX")
+      st.subheader("🧩 الخطوة 2: استوديو المحاذاة والتعديل المتقدم (MateCat Studio)")
+      st.caption(
+          "استخدم أزرار التحكم لنقل النصوص، الدمج، التقسيم، والتعديل النصي المباشر لضمان دقة التقابل:"
+      )
 
-      lines_en = [line.strip() for line in text_en.split("\n") if line.strip()]
-      lines_ar = [line.strip() for line in text_ar.split("\n") if line.strip()]
+      # زر إضافة وحدة جديدة فارغة
+      if st.button("➕ إضافة وحدة محاذاة جديدة"):
+        st.session_state["lines_en"].append("")
+        st.session_state["lines_ar"].append("")
+        st.rerun()
 
-      # استخراج وتخزين الأسطر تلقائياً
-      aligned_pairs = []
+      lines_en = st.session_state["lines_en"]
+      lines_ar = st.session_state["lines_ar"]
       max_len = max(len(lines_en), len(lines_ar))
 
-      st.caption("معاينة أزواج الجمل المستخرجة والمحاذاة آلياً:")
+      # توحيد أطوال القوائم
+      while len(lines_en) < max_len:
+        lines_en.append("")
+      while len(lines_ar) < max_len:
+        lines_ar.append("")
 
-      for i in range(max_len):
-        en_val = lines_en[i] if i < len(lines_en) else ""
-        ar_val = lines_ar[i] if i < len(lines_ar) else ""
+      i = 0
+      while i < max_len:
+        st.markdown(
+            f'<div style="background-color: #111827; padding: 10px; border-radius: 8px; border: 1px solid #374151; margin-bottom: 10px;">'
+            f'<b style="color: #EAB308;">وحدة محاذاة [{i+1}]</b></div>',
+            unsafe_allow_html=True,
+        )
 
-        if en_val and ar_val:
-          aligned_pairs.append((en_val, ar_val))
+        col_en, col_ar, col_actions = st.columns([4, 4, 2])
 
-        # عرض أول 15 جملة فقط لعدم إثقال الصفحة
-        if i < 15:
-          col_a1, col_a2 = st.columns(2)
-          with col_a1:
-            st.text_input(
-                f"إنجليزي [{i+1}]",
-                value=en_val,
-                key=f"show_en_{i}",
-                disabled=True,
-            )
-          with col_a2:
-            st.text_input(
-                f"عربي [{i+1}]",
-                value=ar_val,
-                key=f"show_ar_{i}",
-                disabled=True,
-            )
+        with col_en:
+          val_en = st.text_area(
+              f"EN [{i+1}]",
+              value=lines_en[i],
+              height=80,
+              key=f"input_en_{i}",
+              label_visibility="collapsed",
+          )
+          st.session_state["lines_en"][i] = val_en
+
+        with col_ar:
+          val_ar = st.text_area(
+              f"AR [{i+1}]",
+              value=lines_ar[i],
+              height=80,
+              key=f"input_ar_{i}",
+              label_visibility="collapsed",
+          )
+          st.session_state["lines_ar"][i] = val_ar
+
+        with col_actions:
+          c1, c2 = st.columns(2)
+          # نقل النص العربي للأعلى
+          with c1:
+            if st.button("⬆️", key=f"up_{i}", help="نقل النص العربي للأعلى"):
+              if i > 0:
+                st.session_state["lines_ar"][i], (
+                    st.session_state["lines_ar"][i - 1]
+                ) = (
+                    st.session_state["lines_ar"][i - 1],
+                    st.session_state["lines_ar"][i],
+                )
+                st.rerun()
+
+          # نقل النص العربي للأسفل
+          with c2:
+            if st.button("⬇️", key=f"down_{i}", help="نقل النص العربي للأسفل"):
+              if i < max_len - 1:
+                st.session_state["lines_ar"][i], (
+                    st.session_state["lines_ar"][i + 1]
+                ) = (
+                    st.session_state["lines_ar"][i + 1],
+                    st.session_state["lines_ar"][i],
+                )
+                st.rerun()
+
+          # دمج مع الوحدة التالية
+          if st.button(
+              "🔗 دمج مع التالية", key=f"merge_{i}", use_container_width=True
+          ):
+            if i < max_len - 1:
+              st.session_state["lines_en"][i] += (
+                  " " + st.session_state["lines_en"][i + 1]
+              )
+              st.session_state["lines_ar"][i] += (
+                  " " + st.session_state["lines_ar"][i + 1]
+              )
+              st.session_state["lines_en"].pop(i + 1)
+              st.session_state["lines_ar"].pop(i + 1)
+              st.rerun()
+
+          # حذف الوحدة
+          if st.button("🗑️ حذف", key=f"del_{i}", use_container_width=True):
+            st.session_state["lines_en"].pop(i)
+            st.session_state["lines_ar"].pop(i)
+            st.rerun()
+
+        i += 1
 
       st.markdown("<br>", unsafe_allow_html=True)
 
-      if st.button("🚀 اعتماد المحاذاة وإنشاء ذاكرة TMX"):
-        if aligned_pairs:
-          st.session_state["aligned_pairs"] = aligned_pairs
-          tmx_data = generate_tmx_file(aligned_pairs)
-
-          st.success(
-              f"🎉 تم اعتماد **{len(aligned_pairs)}** وحدة محاذاة بنجاح وتوليد"
-              " ملف TMX ذو حجم حقيقي!"
+      # تجميع الأسطر الصالحة للتصدير
+      final_pairs = [
+          (en.strip(), ar.strip())
+          for en, ar in zip(
+              st.session_state["lines_en"], st.session_state["lines_ar"]
           )
+          if en.strip() and ar.strip()
+      ]
+
+      if st.button(
+          "🚀 اعتماد المحاذاة النهائية وإنشاء TMX", use_container_width=True
+      ):
+        if final_pairs:
+          st.session_state["aligned_pairs"] = final_pairs
+          tmx_data = generate_tmx_file(final_pairs)
+
+          st.success(f"🎉 تم اعتماد **{len(final_pairs)}** وحدة محاذاة بنجاح!")
           st.download_button(
               "💾 تنزيل ملف الـ TMX الموحد",
               data=tmx_data,
@@ -501,16 +560,13 @@ with tab1:
               mime="application/x-tmx+xml",
           )
           st.info(
-              "👉 **الانتقال المباشر:** انتقل الآن إلى **'التبويب الثاني"
-              " (الاستخراج الذكي)'** بدون الحاجة لرفع الملف من جديد!"
+              "👉 **انتقل الآن إلى 'التبويب الثاني (الاستخراج الذكي)'** للبدء"
+              " مع الذاكرة المحاذاة!"
           )
         else:
-          st.error("⚠️ لم يتم العثور على أزواج جمل صالحة للتحويل.")
+          st.error("⚠️ يرجى التأكد من وجود جمل صالحة للتقابل.")
     else:
-      st.error(
-          "⚠️ تعذر استخراج أي نصوص من ملفات الـ PDF المرفوعة. تأكد أن الملفات"
-          " تحتوي على نصوص قابلة للتحديد وليست صوراً مسحوبة بـ Scanner."
-      )
+      st.error("⚠️ تعذر استخراج النصوص من ملفات الـ PDF.")
 
 # ---------------------------------------------------------
 # Tab 2: الاستخراج الذكي وتوليد البطاقات

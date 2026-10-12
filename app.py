@@ -62,10 +62,10 @@ st.markdown(
     """
 <div class="header-container">
     <div class="header-text">
-        <h1 style="color: #EAB308; margin: 0; font-size: 26px; font-weight: 800;">⚖️ المنصة العامة للتحليل والاستخراج القانوني وتوليد البطاقات</h1>
-        <p style="color: #F3F4F6; font-size: 15px; margin-top: 8px; margin-bottom: 12px;">نظام ذكي متكامل لمحاذاة النصوص القانونية، استخراج المصطلحات الموضوعية، وتوليد بطاقات PDF ومسارد الموارد المعتمدة</p>
+        <h1 style="color: #EAB308; margin: 0; font-size: 26px; font-weight: 800;">⚖️ AI Legal workspace</h1>
+        <p style="color: #F3F4F6; font-size: 15px; margin-top: 8px; margin-bottom: 12px;"> YOUR all-in-one AI toolkit for legal text alignment, term extraction.</p>
         <span style="color: #E5E7EB; font-size: 13px; background: rgba(234, 179, 8, 0.15); padding: 6px 18px; border-radius: 20px; border: 1px solid rgba(234, 179, 8, 0.4);">
-            💻 نظام المعالجة والتحليل الذكي | إعداد وتطوير: <b>يوسف نورالدين</b>
+                Next-Gen AI Engine  | Developed by  : <b> Yousef Elmogamez</b>
         </span>
     </div>
 </div>

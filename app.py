@@ -9,15 +9,19 @@ import xml.etree.ElementTree as ET
 import arabic_reshaper
 from bidi.algorithm import get_display
 from docx import Document
+import fitz  # PyMuPDF
 from openai import OpenAI
 import pandas as pd
 import pdfplumber
+import pytesseract
+from PIL import Image
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfgen import canvas
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
+import streamlit.components.v1 as components
 
 # =========================================================
 # 1. إعدادات صفحة Streamlit
@@ -31,7 +35,7 @@ st.set_page_config(
 
 
 # =========================================================
-# 2. تحميل ملف ה- CSS
+# 2. تحميل ملف CSS
 # =========================================================
 def load_css(file_name="style.css"):
   try:
@@ -134,29 +138,14 @@ if "tmx_bytes" not in st.session_state:
 # =========================================================
 # 7. دوال تحويل الـ PDF وقراءة الـ TMX
 # =========================================================
-
-import fitz  # PyMuPDF
-import hashlib
-import unicodedata
-from html import escape as html_escape
-from pathlib import Path
-from xml.sax.saxutils import escape as xml_escape
-
-import pytesseract
-from PIL import Image
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import streamlit.components.v1 as components
-
-MIN_PAGE_CHARS = 25  # أقل من هذا العدد من الحروف يعتبر الصفحة صورية
-OCR_DPI = 300  # 150 كان منخفضاً جداً للعربية (النقاط والتشكيل تضيع)
+MIN_PAGE_CHARS = 25
+OCR_DPI = 300
 
 _INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 _XML_BAD_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def normalize_text(text):
-  """توحيد الأحرف: NFKC يحوّل أشكال العرض العربية (ﻟ ﻻ ...) إلى حروف أصلية."""
   text = unicodedata.normalize("NFKC", text)
   text = _INVISIBLE_RE.sub("", text)
   return text.replace("\u00a0", " ")
@@ -170,37 +159,32 @@ def _ocr_page(page):
 
 @st.cache_data(show_spinner="⏳ جاري استخراج النص من الملف...")
 def extract_text_from_pdf_bytes(data):
-  """استخراج هجين على مستوى كل صفحة (وليس على مستوى الملف كله).
-
-  الخطأ القديم: لو كانت صفحة واحدة فقط نصية في ملف ممسوح ضوئياً لما
-  اشتغل الـ OCR أبداً وضاعت باقي الصفحات. الآن يُقرَّر لكل صفحة بمفردها.
-  """
   pages_text, notes = [], []
   doc = fitz.open(stream=data, filetype="pdf")
   plumber = None
   try:
     plumber = pdfplumber.open(io.BytesIO(data))
-  except Exception as e:  # noqa: BLE001
+  except Exception as e:
     notes.append(f"pdfplumber: {e}")
 
   for i, page in enumerate(doc):
     txt = ""
     try:
       txt = page.get_text("text", sort=True) or ""
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
       notes.append(f"صفحة {i+1} (PyMuPDF): {e}")
 
     if len(txt.strip()) < MIN_PAGE_CHARS and plumber is not None:
       try:
         txt = plumber.pages[i].extract_text() or ""
-      except Exception as e:  # noqa: BLE001
+      except Exception as e:
         notes.append(f"صفحة {i+1} (pdfplumber): {e}")
 
     if len(txt.strip()) < MIN_PAGE_CHARS:
       try:
         txt = _ocr_page(page)
         notes.append(f"صفحة {i+1}: قُرئت بالـ OCR")
-      except Exception as e:  # noqa: BLE001
+      except Exception as e:
         notes.append(f"صفحة {i+1} (OCR): {e}")
 
     if txt.strip():
@@ -217,9 +201,6 @@ def extract_text_from_pdf(pdf_file):
   return extract_text_from_pdf_bytes(pdf_file.read())
 
 
-# ---------------------------------------------------------
-# تجزئة النص إلى فقرات/مواد قانونية بدل الأسطر المكسورة
-# ---------------------------------------------------------
 _NEW_UNIT_RE = re.compile(
     r"^\s*(?:"
     r"(?:المادة|مادة|الباب|الفصل|الفرع|القسم)\b"
@@ -238,7 +219,6 @@ _TERMINAL = (".", "؛", ";", ":", "؟", "?", "!", "。")
 
 
 def process_pdf_text_to_segments(text):
-  """ينظف النص ويدمج الأسطر المكسورة في فقرات، ويفصل عند كل مادة/بند جديد."""
   segments, buf = [], ""
 
   def flush():
@@ -253,7 +233,7 @@ def process_pdf_text_to_segments(text):
       continue
     if buf and (_NEW_UNIT_RE.match(line) or buf.rstrip().endswith(_TERMINAL)):
       flush()
-    if buf.endswith("-") and line[:1].islower():  # كلمة إنجليزية مقطّعة
+    if buf.endswith("-") and line[:1].islower():
       buf = buf[:-1] + line
     else:
       buf = f"{buf} {line}" if buf else line
@@ -300,13 +280,11 @@ def parse_tmx_bytes(tmx_content):
   return pairs
 
 
-
 def _xml_safe(text):
   return xml_escape(_XML_BAD_RE.sub("", str(text)))
 
 
 def generate_tmx_file(pairs):
-  # الخطأ القديم: النص كان يُكتب كما هو، فأي & أو < أو > تفسد ملف الـ TMX
   tmx_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <tmx version="1.4">
   <header creationtool="General Legal Terminology Platform" creationtoolversion="2.0" segtype="sentence" adminlang="en-us" srclang="en" datatype="plaintext"/>
@@ -322,24 +300,31 @@ def generate_tmx_file(pairs):
 
 
 # =========================================================
-# 8. دالة توليد بطاقات الـ PDF الفاخرة (بديل الـ Word)
+# 8. توليد بطاقات الـ PDF
 # =========================================================
 _FONT_CANDIDATES = [
-    # (regular, bold)
     ("fonts/Amiri-Regular.ttf", "fonts/Amiri-Bold.ttf"),
     ("fonts/NotoNaskhArabic-Regular.ttf", "fonts/NotoNaskhArabic-Bold.ttf"),
-    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-    ("/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"),
+    (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
+    ),
     ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
     ("C:/Windows/Fonts/tahoma.ttf", "C:/Windows/Fonts/tahomabd.ttf"),
     ("/Library/Fonts/Arial Unicode.ttf", "/Library/Fonts/Arial Unicode.ttf"),
-    ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    (
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    ),
 ]
 _PDF_FONTS = None
 
 
 def get_pdf_fonts():
-  """يسجل خطاً يدعم العربية. Helvetica لا يحتوي حروفاً عربية فتظهر مربعات."""
   global _PDF_FONTS
   if _PDF_FONTS:
     return _PDF_FONTS
@@ -352,22 +337,21 @@ def get_pdf_fonts():
         )
         _PDF_FONTS = ("AppFont", "AppFont-Bold")
         return _PDF_FONTS
-      except Exception:  # noqa: BLE001
+      except Exception:
         continue
   _PDF_FONTS = ("Helvetica", "Helvetica-Bold")
   return _PDF_FONTS
 
 
 def _wrap_logical(text, font, size, max_width):
-  """يلف النص المنطقي (قبل bidi) سطراً سطراً ثم يعيد ترتيب كل سطر على حدة.
-
-  ReportLab يلف الفقرة بعد تطبيق get_display فتنعكس أسطر العربية المتعددة،
-  لذلك نقيس العرض ونكسر الأسطر بأنفسنا.
-  """
   lines, cur = [], ""
   for word in str(text).split():
     cand = f"{cur} {word}".strip()
-    if cur and pdfmetrics.stringWidth(prepare_arabic_text(cand), font, size) > max_width:
+    if (
+        cur
+        and pdfmetrics.stringWidth(prepare_arabic_text(cand), font, size)
+        > max_width
+    ):
       lines.append(cur)
       cur = word
     else:
@@ -391,25 +375,48 @@ def generate_pdf_cards_bytes(df):
   font, font_bold = get_pdf_fonts()
   buffer = io.BytesIO()
   doc = SimpleDocTemplate(
-      buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
+      buffer,
+      pagesize=A4,
+      rightMargin=30,
+      leftMargin=30,
+      topMargin=30,
+      bottomMargin=30,
   )
   story = []
   styles = getSampleStyleSheet()
 
   title_style = ParagraphStyle(
-      "TitleStyle", parent=styles["Heading1"], fontName=font_bold, fontSize=18,
-      alignment=1, textColor=colors.HexColor("#0F172A"), leading=26,
+      "TitleStyle",
+      parent=styles["Heading1"],
+      fontName=font_bold,
+      fontSize=18,
+      alignment=1,
+      textColor=colors.HexColor("#0F172A"),
+      leading=26,
   )
   sub_style = ParagraphStyle(
-      "SubStyle", parent=styles["Normal"], fontName=font, fontSize=10,
-      alignment=1, textColor=colors.HexColor("#64748B"), leading=14,
+      "SubStyle",
+      parent=styles["Normal"],
+      fontName=font,
+      fontSize=10,
+      alignment=1,
+      textColor=colors.HexColor("#64748B"),
+      leading=14,
   )
   cell_title_style = ParagraphStyle(
-      "CellTitle", fontName=font_bold, fontSize=10, alignment=2, leading=15,
+      "CellTitle",
+      fontName=font_bold,
+      fontSize=10,
+      alignment=2,
+      leading=15,
       textColor=colors.HexColor("#1E293B"),
   )
   cell_val_style = ParagraphStyle(
-      "CellVal", fontName=font, fontSize=10, alignment=2, leading=15,
+      "CellVal",
+      fontName=font,
+      fontSize=10,
+      alignment=2,
+      leading=15,
       textColor=colors.HexColor("#0F172A"),
   )
   cell_val_en_style = ParagraphStyle("CellValEn", parent=cell_val_style, alignment=0)
@@ -418,42 +425,72 @@ def generate_pdf_cards_bytes(df):
   val_text_w = VAL_W - 2 * PAD - 4
   lbl_text_w = LBL_W - 2 * PAD - 4
 
-  story.append(ar_par("بطاقات المصطلحات القانونية الموثقة (Legal Terminology Cards)", title_style, 520))
-  story.append(ar_par("منصة التحليل والاستخراج القانوني الذكي | إعداد: يوسف نورالدين", sub_style, 520))
+  story.append(
+      ar_par(
+          "بطاقات المصطلحات القانونية الموثقة (Legal Terminology Cards)",
+          title_style,
+          520,
+      )
+  )
+  story.append(
+      ar_par(
+          "منصة التحليل والاستخراج القانوني الذكي | إعداد: يوسف نورالدين",
+          sub_style,
+          520,
+      )
+  )
   story.append(Spacer(1, 15))
 
   total = len(df)
-  # الخطأ القديم: استعمال idx بعد drop_duplicates يعطي أرقاماً متقطعة تتجاوز العدد الكلي
   for n, (_, row) in enumerate(df.iterrows(), start=1):
-    story.append(ar_par(f"بطاقة مصطلح رقم: ({n:02d} / {total:02d})", cell_title_style, 520))
+    story.append(
+        ar_par(f"بطاقة مصطلح رقم: ({n:02d} / {total:02d})", cell_title_style, 520)
+    )
     story.append(Spacer(1, 5))
 
     def lbl(t):
       return ar_par(t, cell_title_style, lbl_text_w)
 
     def ar_val(key, default=""):
-      return ar_par(str(row.get(key, default) or default), cell_val_style, val_text_w)
+      return ar_par(
+          str(row.get(key, default) or default), cell_val_style, val_text_w
+      )
 
     data = [
-        [en_par(row.get("English Term", ""), cell_val_en_style), lbl("المصطلح بالإنجليزي (English Term)")],
+        [
+            en_par(row.get("English Term", ""), cell_val_en_style),
+            lbl("المصطلح بالإنجليزي (English Term)"),
+        ],
         [ar_val("Arabic Term"), lbl("المقابل بالعربي (Arabic Term)")],
         [ar_val("Sub Domain", "قانون عام"), lbl("المجال الفرعي (Sub-Domain)")],
         [ar_val("Document Type", "نص قانوني عام"), lbl("نوع المستند (Document Type)")],
-        [en_par(row.get("Source EN", ""), cell_val_en_style), lbl("السياق الإنجليزي (Context EN)")],
+        [
+            en_par(row.get("Source EN", ""), cell_val_en_style),
+            lbl("السياق الإنجليزي (Context EN)"),
+        ],
         [ar_val("Source AR"), lbl("السياق العربي (Context AR)")],
         [ar_val("Arabic Description"), lbl("الشرح والتعريف (Legal Description)")],
     ]
 
     t = Table(data, colWidths=[VAL_W, LBL_W])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), PAD),
-    ]))
+    t.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("PADDING", (0, 0), (-1, -1), PAD),
+        ])
+    )
     story.append(t)
     story.append(Spacer(1, 15))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0"), spaceAfter=15))
+    story.append(
+        HRFlowable(
+            width="100%",
+            thickness=1,
+            color=colors.HexColor("#E2E8F0"),
+            spaceAfter=15,
+        )
+    )
 
   doc.build(story)
   buffer.seek(0)
@@ -469,65 +506,79 @@ tab1, tab2 = st.tabs(
 
 
 # =========================================================
-# مكوّن استوديو المحاذاة (ثنائي الاتجاه: يعيد التعديلات إلى بايثون)
+# مكوّن استوديو المحاذاة (مع شريط تمرير داخلي مخصص للوحدات)
 # =========================================================
-# الخطأ الجوهري القديم: components.html اتجاه واحد فقط، فكل ما تفعله في
-# الاستوديو (تعديل/سحب/تقسيم/حذف) يبقى داخل المتصفح، وزر "اعتماد" كان يقرأ
-# lines_en/lines_ar الأصلية. هنا نستعمل declare_component ليعود الناتج لبايثون.
 ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
 <html lang="ar"><head><meta charset="utf-8">
 <style>
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body { font-family: 'Cairo','Segoe UI',Tahoma,Arial,sans-serif; background:#0B0F19; color:#E5E7EB; margin:0; padding:10px; overflow-y:auto; }
-  #bar { display:flex; gap:10px; align-items:center; margin-bottom:12px; direction:rtl; }
-  #toast { color:#FDE047; font-size:13px; }
-  .alignment-container { display:flex; flex-direction:column; gap:12px; direction:rtl; padding-bottom:60px; }
-  .segment-row { display:flex; gap:12px; background:#111827; border:1px solid #374151; border-radius:10px; padding:12px; align-items:center; }
-  .segment-row:hover { border-color:#4B5563; }
-  .segment-num { color:#EAB308; font-weight:bold; width:45px; text-align:center; font-size:14px; flex-shrink:0; }
-  .cell { flex:1; display:flex; gap:6px; align-items:stretch; min-width:0; border:2px solid transparent; border-radius:8px; }
-  .cell.drag-over { border:2px dashed #EAB308; background:rgba(234,179,8,.15); }
-  .handle { width:18px; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:#1F2937; border-radius:6px; color:#9CA3AF; cursor:grab; user-select:none; font-size:14px; }
-  .handle:active { cursor:grabbing; color:#EAB308; }
-  .card-box { flex:1; min-width:0; background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 14px; min-height:55px; font-size:14px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; cursor:text; }
-  .card-box:focus { outline:none; border-color:#EAB308; background:#0F172A; }
-  .en-box { direction:ltr; text-align:left; color:#93C5FD; }
-  .ar-box { direction:rtl; text-align:right; color:#FDE047; }
-  .action-btn-group { display:flex; flex-direction:column; gap:5px; flex-shrink:0; }
-  .btn-ctrl { background:#1F2937; color:#E5E7EB; border:1px solid #374151; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:bold; cursor:pointer; font-family:inherit; }
-  .btn-ctrl:hover { background:#374151; color:#EAB308; }
-  .btn-del:hover { background:#991B1B; color:#FFF; }
-  .add-row-btn { background:linear-gradient(135deg,#EAB308 0%,#CA8A04 100%); color:#0F172A; font-weight:bold; border:none; border-radius:8px; padding:10px 20px; cursor:pointer; font-family:inherit; }
+  html, body { height: 100%; margin: 0; padding: 0; background: #0B0F19; color: #E5E7EB; font-family: 'Cairo','Segoe UI',Tahoma,Arial,sans-serif; overflow: hidden; }
+  
+  .studio-wrapper { display: flex; flex-direction: column; height: 100vh; padding: 10px; }
+  
+  #bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; direction: rtl; flex-shrink: 0; }
+  #toast { color: #FDE047; font-size: 13px; }
+  
+  /* صندوق الحاوي مع شريط تمرير خاص داخلي ولن يطيل الصفحة العامة */
+  .alignment-container { 
+    display: flex; flex-direction: column; gap: 12px; direction: rtl; 
+    flex-grow: 1; overflow-y: auto; padding: 5px 10px 20px 10px;
+    border: 1px solid #1F2937; border-radius: 12px; background: #07090E;
+  }
+  
+  /* تخصيص شريط التمرير الداخلي ليكون أنيقاً */
+  .alignment-container::-webkit-scrollbar { width: 8px; }
+  .alignment-container::-webkit-scrollbar-track { background: #0B0F19; border-radius: 4px; }
+  .alignment-container::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+  .alignment-container::-webkit-scrollbar-thumb:hover { background: #EAB308; }
+
+  .segment-row { display: flex; gap: 12px; background: #111827; border: 1px solid #374151; border-radius: 10px; padding: 12px; align-items: center; flex-shrink: 0; }
+  .segment-row:hover { border-color: #4B5563; }
+  .segment-num { color: #EAB308; font-weight: bold; width: 45px; text-align: center; font-size: 14px; flex-shrink: 0; }
+  .cell { flex: 1; display: flex; gap: 6px; align-items: stretch; min-width: 0; border: 2px solid transparent; border-radius: 8px; }
+  .cell.drag-over { border: 2px dashed #EAB308; background: rgba(234,179,8,.15); }
+  .handle { width: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #1F2937; border-radius: 6px; color: #9CA3AF; cursor: grab; user-select: none; font-size: 14px; }
+  .handle:active { cursor: grabbing; color: #EAB308; }
+  .card-box { flex: 1; min-width: 0; background: #1E293B; border: 1px solid #475569; border-radius: 8px; padding: 10px 14px; min-height: 55px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+  .card-box:focus { outline: none; border-color: #EAB308; background: #0F172A; }
+  .en-box { direction: ltr; text-align: left; color: #93C5FD; }
+  .ar-box { direction: rtl; text-align: right; color: #FDE047; }
+  .action-btn-group { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
+  .btn-ctrl { background: #1F2937; color: #E5E7EB; border: 1px solid #374151; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: bold; cursor: pointer; font-family: inherit; }
+  .btn-ctrl:hover { background: #374151; color: #EAB308; }
+  .btn-del:hover { background: #991B1B; color: #FFF; }
+  .add-row-btn { background: linear-gradient(135deg,#EAB308 0%,#CA8A04 100%); color: #0F172A; font-weight: bold; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-family: inherit; }
 </style></head>
 <body>
-<div id="bar"><button class="add-row-btn" id="addBtn">➕ إضافة وحدة محاذاة جديدة</button><span id="toast"></span></div>
-<div class="alignment-container" id="alignmentContainer"></div>
+<div class="studio-wrapper">
+  <div id="bar">
+    <button class="add-row-btn" id="addBtn">➕ إضافة وحدة محاذاة جديدة</button>
+    <span id="toast"></span>
+  </div>
+  <div class="alignment-container" id="alignmentContainer"></div>
+</div>
 <script>
   const container = document.getElementById('alignmentContainer');
   const toastEl = document.getElementById('toast');
   let data = [], token = null, drag = null, sendTimer = null;
 
-  // ---------- بروتوكول Streamlit ----------
   function post(type, extra) { window.parent.postMessage(Object.assign({isStreamlitMessage:true, type}, extra||{}), '*'); }
   function pushValue() { post('streamlit:setComponentValue', {value: data.map(d => ({en:d.en, ar:d.ar})), dataType:'json'}); }
   function pushSoon() { clearTimeout(sendTimer); sendTimer = setTimeout(pushValue, 500); }
   window.addEventListener('message', (ev) => {
     if (!ev.data || ev.data.type !== 'streamlit:render') return;
     const args = ev.data.args || {};
-    if (args.token !== token) {            // لا نعيد التهيئة عند كل rerun حتى لا تضيع التعديلات
+    if (args.token !== token) {
       token = args.token;
       data = (args.pairs || []).map(p => ({en: p.en || '', ar: p.ar || ''}));
       renderRows();
     }
   });
   post('streamlit:componentReady', {apiVersion: 1});
-  post('streamlit:setFrameHeight', {height: 800});
+  post('streamlit:setFrameHeight', {height: 650});
 
   function toast(msg) { toastEl.textContent = msg; setTimeout(() => { if (toastEl.textContent === msg) toastEl.textContent = ''; }, 2500); }
 
-  // ---------- العرض: textContent (وليس innerHTML) ----------
-  // الخطأ القديم: النص كان يُحقن في innerHTML، فأي <كلمة> أو & أو < يُفسَّر كوسم HTML وتختفي الكلمات.
   function makeCell(type, index) {
     const cell = document.createElement('div');
     cell.className = 'cell'; cell.dataset.index = index; cell.dataset.type = type;
@@ -540,7 +591,7 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     if (box.contentEditable !== 'plaintext-only') box.contentEditable = 'true';
     box.textContent = data[index][type];
     box.addEventListener('input', () => { data[index][type] = box.innerText.replace(/\n$/, ''); pushSoon(); });
-    box.addEventListener('paste', (e) => {   // لصق نص خام فقط
+    box.addEventListener('paste', (e) => {
       if (box.contentEditable === 'plaintext-only') return;
       e.preventDefault();
       document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
@@ -549,8 +600,8 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     cell.addEventListener('dragover', (e) => {
       if (!drag || drag.type !== type) return;
       e.preventDefault(); cell.classList.add('drag-over');
-      const se = document.scrollingElement, th = 80;      // تمرير تلقائي
-      if (e.clientY < th) se.scrollTop -= 15; else if (window.innerHeight - e.clientY < th) se.scrollTop += 15;
+      const th = 50;
+      if (e.clientY < th) container.scrollTop -= 15; else if (window.innerHeight - e.clientY < th) container.scrollTop += 15;
     });
     cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
     cell.addEventListener('drop', (e) => {
@@ -571,7 +622,7 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
       const grp = document.createElement('div'); grp.className = 'action-btn-group';
       const sp = document.createElement('button'); sp.className = 'btn-ctrl'; sp.textContent = '✂️ تقسيم'; sp.title = 'تقسيم عند مكان المؤشر';
       const del = document.createElement('button'); del.className = 'btn-ctrl btn-del'; del.textContent = '🗑️ حذف'; del.title = 'حذف هذه الوحدة';
-      [sp, del].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));  // لا تفقد التحديد عند الضغط
+      [sp, del].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
       sp.addEventListener('click', () => splitUnit(index));
       del.addEventListener('click', () => deleteRow(index));
       grp.append(sp, del);
@@ -580,9 +631,6 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     });
   }
 
-  // ---------- التقسيم عند المؤشر ----------
-  // الخطأ القديم: focusOffset هو موضع داخل العقدة الحالية وليس داخل الصندوق كله،
-  // وكان يستعمل index الزر وليس الصندوق الذي فيه المؤشر.
   function splitUnit(index) {
     const sel = window.getSelection();
     if (!sel.rangeCount || !sel.anchorNode) { toast('ضع المؤشر داخل النص أولاً'); return; }
@@ -605,7 +653,7 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
   function deleteRow(index) { data.splice(index, 1); renderRows(); pushValue(); }
   document.getElementById('addBtn').addEventListener('click', () => {
     data.push({en: '', ar: ''}); renderRows(); pushValue();
-    document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+    container.scrollTop = container.scrollHeight;
   });
 </script></body></html>"""
 
@@ -661,9 +709,8 @@ with tab1:
       st.markdown("---")
       st.subheader("🧩 الخطوة 2: استوديو المحاذاة التفاعلي (MateCat Alignment Studio)")
       st.caption(
-          "💡 **الميزات المتاحة:** اسحب من المقبض ⠿ لتبديل المحتوى | ضع المؤشر داخل"
-          " النص ثم اضغط ✂️ لتقسيمه | 🗑️ حذف | ➕ إضافة وحدة. كل تعديل ينتقل"
-          " تلقائياً إلى الاعتماد النهائي."
+          "💡 **الميزات المتاحة:** شريط تمرير خاص بالوحدات داخل النافذة دون إطالة"
+          " الصفحة العامة | اسحب من المقبض ⠿ | زر التقسيم ✂️ | 🗑️ حذف | ➕ إضافة وحدة."
       )
 
       initial_pairs = [{"en": e, "ar": a} for e, a in zip(segs_en, segs_ar)]
@@ -677,7 +724,6 @@ with tab1:
       st.markdown("<br>", unsafe_allow_html=True)
 
       if st.button("🚀 اعتماد المحاذاة النهائية وتوليد TMX", use_container_width=True):
-        # الخطأ القديم: كانت تُقرأ lines_en/lines_ar الأصلية، فتضيع كل تعديلات الاستوديو
         final_pairs = [
             (p["en"].strip(), p["ar"].strip())
             for p in current_pairs
@@ -690,7 +736,6 @@ with tab1:
           st.session_state["tmx_bytes"] = None
           st.error("⚠️ يرجى التأكد من وجود جمل صالحة للتقابل.")
 
-      # يُعرض خارج شرط الزر حتى لا يختفي عند الضغط على زر التنزيل (rerun)
       if st.session_state.get("tmx_bytes"):
         st.success(f"🎉 تم اعتماد **{len(st.session_state['aligned_pairs'])}** وحدة محاذاة بنجاح!")
         st.download_button(
@@ -780,7 +825,6 @@ STRICT FILTERING & AUTOMATIC CONTEXT DETECTION RULES:
             terms = raw.get("terms", []) if isinstance(raw, dict) else raw
 
             def _s(item, key, default=""):
-              # النموذج قد يعيد null فيفشل .strip() — نحوّل القيمة الفارغة للافتراضية
               return str(item.get(key) or default).strip()
 
             if terms and isinstance(terms, list):
@@ -812,7 +856,6 @@ STRICT FILTERING & AUTOMATIC CONTEXT DETECTION RULES:
         else:
           st.error("لم يتم العثور على مصطلحات موضوعية بعد التصفية.")
 
-  # عرض النتائج والتصدير
   if st.session_state["results_df"] is not None:
     df_res = st.session_state["results_df"]
 
@@ -828,17 +871,15 @@ STRICT FILTERING & AUTOMATIC CONTEXT DETECTION RULES:
         use_container_width=True,
     )
 
-    # تجهيز التنزيل لـ Excel (خالٍ من POS)
     excel_buffer = io.BytesIO()
     excel_df = df_res.drop(columns=["POS"], errors="ignore")
     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
       excel_df.to_excel(writer, index=False)
     excel_buffer.seek(0)
 
-    # تجهيز التنزيل لـ PDF (بديل الوورد)
     try:
       pdf_buffer = generate_pdf_cards_bytes(df_res)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
       pdf_buffer = None
       st.warning(f"تعذر توليد بطاقات PDF: {e}")
 

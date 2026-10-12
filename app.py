@@ -170,46 +170,80 @@ def _ocr_page(page):
 
 @st.cache_data(show_spinner="⏳ جاري استخراج النص من الملف...")
 def extract_text_from_pdf_bytes(data):
-  """استخراج هجين على مستوى كل صفحة (وليس على مستوى الملف كله).
-
-  الخطأ القديم: لو كانت صفحة واحدة فقط نصية في ملف ممسوح ضوئياً لما
-  اشتغل الـ OCR أبداً وضاعت باقي الصفحات. الآن يُقرَّر لكل صفحة بمفردها.
-  """
-  pages_text, notes = [], []
-  doc = fitz.open(stream=data, filetype="pdf")
-  plumber = None
-  try:
-    plumber = pdfplumber.open(io.BytesIO(data))
-  except Exception as e:  # noqa: BLE001
-    notes.append(f"pdfplumber: {e}")
-
-  for i, page in enumerate(doc):
-    txt = ""
+    """استخراج هجين لكل صفحة، مع كشف الصفحات التي يبدو أن طبقة النص فيها ناقصة."""
+    pages_text, notes = [], []
+    doc = fitz.open(stream=data, filetype="pdf")
+    plumber = None
     try:
-      txt = page.get_text("text", sort=True) or ""
+        plumber = pdfplumber.open(io.BytesIO(data))
     except Exception as e:  # noqa: BLE001
-      notes.append(f"صفحة {i+1} (PyMuPDF): {e}")
+        notes.append(f"pdfplumber: {e}")
 
-    if len(txt.strip()) < MIN_PAGE_CHARS and plumber is not None:
-      try:
-        txt = plumber.pages[i].extract_text() or ""
-      except Exception as e:  # noqa: BLE001
-        notes.append(f"صفحة {i+1} (pdfplumber): {e}")
+    try:
+        for i, page in enumerate(doc):
+            fitz_txt = ""
+            plumber_txt = ""
+            try:
+                fitz_txt = page.get_text("text", sort=True) or ""
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"صفحة {i+1} (PyMuPDF): {e}")
 
-    if len(txt.strip()) < MIN_PAGE_CHARS:
-      try:
-        txt = _ocr_page(page)
-        notes.append(f"صفحة {i+1}: قُرئت بالـ OCR")
-      except Exception as e:  # noqa: BLE001
-        notes.append(f"صفحة {i+1} (OCR): {e}")
+            # جرّب pdfplumber إذا كان استخراج PyMuPDF قصيراً، واحتفظ بالأطول.
+            if plumber is not None:
+                try:
+                    plumber_txt = plumber.pages[i].extract_text() or ""
+                except Exception as e:  # noqa: BLE001
+                    notes.append(f"صفحة {i+1} (pdfplumber): {e}")
 
-    if txt.strip():
-      pages_text.append(normalize_text(txt))
+            txt = max((fitz_txt, plumber_txt), key=lambda s: len(s.strip()))
+            image_blocks = [
+                b for b in page.get_text("dict").get("blocks", [])
+                if b.get("type") == 1
+            ]
+            has_images = bool(page.get_images(full=True) or image_blocks)
 
-  if plumber is not None:
-    plumber.close()
-  doc.close()
-  return "\n".join(pages_text), notes
+            # OCR ليس مقتصراً على الصفحات التي يقل نصها عن 25 حرفاً:
+            # نفحص الصفحات ذات الصور أيضاً، فقد تحتوي على نص رقمي جزئي ونص مصوّر.
+            should_ocr = len(txt.strip()) < MIN_PAGE_CHARS or has_images
+            if should_ocr:
+                try:
+                    ocr_txt = _ocr_page(page)
+                    current_len = len(re.sub(r"\s+", "", txt))
+                    ocr_len = len(re.sub(r"\s+", "", ocr_txt))
+
+                    # استبدل النص المستخرج بـ OCR فقط إذا أعطى OCR نصاً أكثر بوضوح،
+                    # لتقليل خطر تكرار النص الموجود أصلاً أو استبدال نص جيد بـ OCR أضعف.
+                    if not txt.strip():
+                        txt = ocr_txt
+                        notes.append(f"صفحة {i+1}: استُخدم OCR لأن النص الرقمي فارغ")
+                    elif ocr_len >= max(MIN_PAGE_CHARS, current_len * 1.25) and ocr_len - current_len >= 40:
+                        txt = ocr_txt
+                        notes.append(
+                            f"صفحة {i+1}: استُخدم OCR لأن النص الرقمي قد يكون ناقصاً "
+                            f"(النص الرقمي {current_len} حرفاً تقريباً، OCR {ocr_len})"
+                        )
+                    elif current_len < MIN_PAGE_CHARS:
+                        txt = ocr_txt
+                        notes.append(f"صفحة {i+1}: قُرئت بالـ OCR")
+                    elif has_images:
+                        notes.append(
+                            f"صفحة {i+1}: تحتوي صوراً؛ قورن OCR بالنص الرقمي "
+                            "واحتُفظ بالنص الرقمي لأن OCR لم يكن أطول بوضوح"
+                        )
+                except Exception as e:  # noqa: BLE001
+                    notes.append(f"صفحة {i+1} (OCR): {e}")
+
+            if txt.strip():
+                pages_text.append(normalize_text(txt))
+            else:
+                notes.append(f"صفحة {i+1}: لم يُستخرج منها نص")
+
+    finally:
+        if plumber is not None:
+            plumber.close()
+        doc.close()
+
+    return "\n\n".join(pages_text), notes
 
 
 def extract_text_from_pdf(pdf_file):
@@ -238,25 +272,35 @@ _TERMINAL = (".", "؛", ";", ":", "؟", "?", "!", "。")
 
 
 def process_pdf_text_to_segments(text):
-  """ينظف النص ويدمج الأسطر المكسورة في فقرات، ويفصل عند كل مادة/بند جديد."""
+  """ينظف النص ويدمج الأسطر المكسورة، مع الحفاظ على حدود الفقرات الواضحة."""
   segments, buf = [], ""
 
   def flush():
     nonlocal buf
     if buf.strip():
-      segments.append(re.sub(r"\s+", " ", buf).strip())
+      segments.append(re.sub(r"\\s+", " ", buf).strip())
     buf = ""
 
-  for raw in text.split("\n"):
+  for raw in text.split("\\n"):
     line = raw.strip()
-    if not line or _PAGE_NOISE_RE.match(line):
+
+    # السطر الفارغ يفصل فقرتين بدلاً من دمجهما.
+    if not line:
+      flush()
       continue
+
+    if _PAGE_NOISE_RE.match(line):
+      continue
+
     if buf and (_NEW_UNIT_RE.match(line) or buf.rstrip().endswith(_TERMINAL)):
       flush()
-    if buf.endswith("-") and line[:1].islower():  # كلمة إنجليزية مقطّعة
+
+    # وصل الكلمات الإنجليزية المقطّعة بشرطة نهاية السطر.
+    if buf.endswith("-") and line[:1].islower():
       buf = buf[:-1] + line
     else:
       buf = f"{buf} {line}" if buf else line
+
   flush()
   return segments
 

@@ -400,8 +400,11 @@ tab1, tab2 = st.tabs(
     ["🟢 استوديو التحويل والمحاذاة (Alignment Studio)", "🔵 الاستخراج الذكي (Terms Extractor)"]
 )
 
+import json
+import streamlit.components.v1 as components
+
 # ---------------------------------------------------------
-# Tab 1: تحويل PDF وتوفير استوديو المحاذاة المتقدم (MateCat Style)
+# Tab 1: استوديو المحاذاة بالسحب والإفلات الحر (MateCat Drag & Drop)
 # ---------------------------------------------------------
 with tab1:
   st.subheader("📄 الخطوة 1: رفع ملفات PDF واستخراج النصوص")
@@ -423,131 +426,128 @@ with tab1:
     if text_en.strip() and text_ar.strip():
       st.success("✅ تم استخراج النصوص بنجاح!")
 
-      # تهيئة حالات القوائم في ذاكرة الجلسة
-      if "lines_en" not in st.session_state:
-        st.session_state["lines_en"] = [
-            line.strip() for line in text_en.split("\n") if line.strip()
-        ]
-      if "lines_ar" not in st.session_state:
-        st.session_state["lines_ar"] = [
-            line.strip() for line in text_ar.split("\n") if line.strip()
-        ]
+      lines_en = [line.strip() for line in text_en.split("\n") if line.strip()]
+      lines_ar = [line.strip() for line in text_ar.split("\n") if line.strip()]
 
-      st.markdown("---")
-      st.subheader("🧩 الخطوة 2: استوديو المحاذاة والتعديل المتقدم (MateCat Studio)")
-      st.caption(
-          "استخدم أزرار التحكم لنقل النصوص، الدمج، التقسيم، والتعديل النصي المباشر لضمان دقة التقابل:"
-      )
-
-      # زر إضافة وحدة جديدة فارغة
-      if st.button("➕ إضافة وحدة محاذاة جديدة"):
-        st.session_state["lines_en"].append("")
-        st.session_state["lines_ar"].append("")
-        st.rerun()
-
-      lines_en = st.session_state["lines_en"]
-      lines_ar = st.session_state["lines_ar"]
       max_len = max(len(lines_en), len(lines_ar))
-
-      # توحيد أطوال القوائم
       while len(lines_en) < max_len:
         lines_en.append("")
       while len(lines_ar) < max_len:
         lines_ar.append("")
 
-      i = 0
-      while i < max_len:
-        st.markdown(
-            f'<div style="background-color: #111827; padding: 10px; border-radius: 8px; border: 1px solid #374151; margin-bottom: 10px;">'
-            f'<b style="color: #EAB308;">وحدة محاذاة [{i+1}]</b></div>',
-            unsafe_allow_html=True,
-        )
+      st.markdown("---")
+      st.subheader("🧩 الخطوة 2: استوديو المحاذاة بالسحب والإفلات (MateCat Alignment)")
+      st.caption(
+          "💡 **طريقة الاستخدام:** يمكنك سحب وإفلات أي بطاقة عربية أو إنجليزية"
+          " بالماوس وإعادة ترتيبها بحرية لتنطبق مع النص المقابل!"
+      )
 
-        col_en, col_ar, col_actions = st.columns([4, 4, 2])
+      # بناء واجهة HTML/JS للسحب والإفلات الحر
+      pairs_json = json.dumps(
+          [{"en": en, "ar": ar} for en, ar in zip(lines_en, lines_ar)]
+      )
 
-        with col_en:
-          val_en = st.text_area(
-              f"EN [{i+1}]",
-              value=lines_en[i],
-              height=80,
-              key=f"input_en_{i}",
-              label_visibility="collapsed",
-          )
-          st.session_state["lines_en"][i] = val_en
+      html_code = f"""
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@600;700&display=swap');
+                body {{ font-family: 'Cairo', sans-serif; background-color: #0B0F19; color: #E5E7EB; margin: 0; padding: 10px; }}
+                .alignment-container {{ display: flex; flex-direction: column; gap: 10px; direction: rtl; }}
+                .segment-row {{ display: flex; gap: 15px; background: #111827; border: 1px solid #374151; border-radius: 10px; padding: 10px; align-items: center; }}
+                .segment-num {{ color: #EAB308; font-weight: bold; width: 40px; text-align: center; font-size: 14px; }}
+                .card-box {{ flex: 1; background: #1E293B; border: 1px dashed #475569; border-radius: 8px; padding: 10px; min-height: 50px; cursor: grab; transition: all 0.2s ease; }}
+                .card-box:active {{ cursor: grabbing; background: #334155; border-color: #EAB308; }}
+                .card-box[contenteditable="true"]:focus {{ outline: none; border-color: #EAB308; background: #0F172A; }}
+                .en-box {{ direction: ltr; text-align: left; color: #93C5FD; }}
+                .ar-box {{ direction: rtl; text-align: right; color: #FDE047; }}
+                .drag-over {{ border: 2px solid #EAB308 !important; background: rgba(234, 179, 8, 0.1) !important; }}
+            </style>
 
-        with col_ar:
-          val_ar = st.text_area(
-              f"AR [{i+1}]",
-              value=lines_ar[i],
-              height=80,
-              key=f"input_ar_{i}",
-              label_visibility="collapsed",
-          )
-          st.session_state["lines_ar"][i] = val_ar
+            <div class="alignment-container" id="alignmentContainer"></div>
 
-        with col_actions:
-          c1, c2 = st.columns(2)
-          # نقل النص العربي للأعلى
-          with c1:
-            if st.button("⬆️", key=f"up_{i}", help="نقل النص العربي للأعلى"):
-              if i > 0:
-                st.session_state["lines_ar"][i], (
-                    st.session_state["lines_ar"][i - 1]
-                ) = (
-                    st.session_state["lines_ar"][i - 1],
-                    st.session_state["lines_ar"][i],
-                )
-                st.rerun()
+            <script>
+                const data = {pairs_json};
+                const container = document.getElementById('alignmentContainer');
 
-          # نقل النص العربي للأسفل
-          with c2:
-            if st.button("⬇️", key=f"down_{i}", help="نقل النص العربي للأسفل"):
-              if i < max_len - 1:
-                st.session_state["lines_ar"][i], (
-                    st.session_state["lines_ar"][i + 1]
-                ) = (
-                    st.session_state["lines_ar"][i + 1],
-                    st.session_state["lines_ar"][i],
-                )
-                st.rerun()
+                function renderRows() {{
+                    container.innerHTML = '';
+                    data.forEach((item, index) => {{
+                        const row = document.createElement('div');
+                        row.className = 'segment-row';
 
-          # دمج مع الوحدة التالية
-          if st.button(
-              "🔗 دمج مع التالية", key=f"merge_{i}", use_container_width=True
-          ):
-            if i < max_len - 1:
-              st.session_state["lines_en"][i] += (
-                  " " + st.session_state["lines_en"][i + 1]
-              )
-              st.session_state["lines_ar"][i] += (
-                  " " + st.session_state["lines_ar"][i + 1]
-              )
-              st.session_state["lines_en"].pop(i + 1)
-              st.session_state["lines_ar"].pop(i + 1)
-              st.rerun()
+                        row.innerHTML = `
+                            <div class="segment-num">[${{index + 1}}]</div>
+                            <div class="card-box en-box" draggable="true" data-index="${{index}}" data-type="en" contenteditable="true">${{item.en}}</div>
+                            <div class="card-box ar-box" draggable="true" data-index="${{index}}" data-type="ar" contenteditable="true">${{item.ar}}</div>
+                        `;
+                        container.appendChild(row);
+                    }});
 
-          # حذف الوحدة
-          if st.button("🗑️ حذف", key=f"del_{i}", use_container_width=True):
-            st.session_state["lines_en"].pop(i)
-            st.session_state["lines_ar"].pop(i)
-            st.rerun()
+                    addDragListeners();
+                }}
 
-        i += 1
+                let draggedIndex = null;
+                let draggedType = null;
+
+                function addDragListeners() {{
+                    document.querySelectorAll('.card-box').forEach(box => {{
+                        box.addEventListener('dragstart', (e) => {{
+                            draggedIndex = e.target.getAttribute('data-index');
+                            draggedType = e.target.getAttribute('data-type');
+                            e.dataTransfer.setData('text/plain', e.target.innerText);
+                        }});
+
+                        box.addEventListener('dragover', (e) => {{
+                            e.preventDefault();
+                            if (e.target.getAttribute('data-type') === draggedType) {{
+                                e.target.classList.add('drag-over');
+                            }}
+                        }});
+
+                        box.addEventListener('dragleave', (e) => {{
+                            e.target.classList.remove('drag-over');
+                        }});
+
+                        box.addEventListener('drop', (e) => {{
+                            e.preventDefault();
+                            e.target.classList.remove('drag-over');
+                            const targetIndex = e.target.getAttribute('data-index');
+                            const targetType = e.target.getAttribute('data-type');
+
+                            if (draggedIndex !== null && targetType === draggedType) {{
+                                // تبديل النصوص بحرية وسحب وإفلات
+                                const temp = data[draggedIndex][draggedType];
+                                data[draggedIndex][draggedType] = data[targetIndex][draggedType];
+                                data[targetIndex][draggedType] = temp;
+                                renderRows();
+                            }}
+                        }});
+
+                        box.addEventListener('input', (e) => {{
+                            const idx = e.target.getAttribute('data-index');
+                            const type = e.target.getAttribute('data-type');
+                            data[idx][type] = e.target.innerText;
+                        }});
+                    }});
+                }}
+
+                renderRows();
+            </script>
+            """
+
+      # عرض واجهة السحب والإفلات
+      components.html(html_code, height=650, scrolling=True)
 
       st.markdown("<br>", unsafe_allow_html=True)
 
-      # تجميع الأسطر الصالحة للتصدير
-      final_pairs = [
-          (en.strip(), ar.strip())
-          for en, ar in zip(
-              st.session_state["lines_en"], st.session_state["lines_ar"]
-          )
-          if en.strip() and ar.strip()
-      ]
-
+      # حفظ البيانات واستخراج TMX
       if st.button(
-          "🚀 اعتماد المحاذاة النهائية وإنشاء TMX", use_container_width=True
+          "🚀 اعتماد المحاذاة النهائية وتوليد TMX", use_container_width=True
       ):
+        final_pairs = [
+            (en.strip(), ar.strip())
+            for en, ar in zip(lines_en, lines_ar)
+            if en.strip() and ar.strip()
+        ]
         if final_pairs:
           st.session_state["aligned_pairs"] = final_pairs
           tmx_data = generate_tmx_file(final_pairs)
@@ -559,10 +559,7 @@ with tab1:
               file_name="Aligned_Legal_Memory.tmx",
               mime="application/x-tmx+xml",
           )
-          st.info(
-              "👉 **انتقل الآن إلى 'التبويب الثاني (الاستخراج الذكي)'** للبدء"
-              " مع الذاكرة المحاذاة!"
-          )
+          st.info("👉 **انتقل الآن إلى 'التبويب الثاني (الاستخراج الذكي)'**!")
         else:
           st.error("⚠️ يرجى التأكد من وجود جمل صالحة للتقابل.")
     else:

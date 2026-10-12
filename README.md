@@ -49,89 +49,32 @@ To achieve ultimate precision, the extraction workflow follows rigorous processi
 
 ---
 
-## 🛠️ Tech Stack
+## 💻 Core Code Snippets & System Implementation
 
-* **Language:** Python
-* **Framework:** Streamlit
-* **LLM Provider:** OpenRouter / OpenAI SDK
-* **Data & Document Processing:** Pandas, OpenPyXL, Python-docx, ElementTree
+### 1. Pre-processing: XML Cleaning & TMX Parsing
+Extracting raw parallel units and cleaning XML/HTML tags and markup noise:
 
----
+```python
+import xml.etree.ElementTree as ET
+import re
 
-## 👤 Developer & Academic Context
+def parse_and_clean_tmx(tmx_file):
+    """
+    Pre-processing: Extract raw parallel units and clean XML/HTML tags.
+    """
+    tree = ET.parse(tmx_file)
+    root = tree.getroot()
+    parallel_units = []
 
-* **Developer:** Yousef Nuralddin Bashir Elmgamez
-* **Department:** Translation Studies, Faculty of Languages, University of Tripoli
-* **Reference Body:** Libyan Legal Assembly (Libyan Legislation Network - lawsociety.ly)
-* **Contact:** +218 92 8756918 | ywsfalmqmz@gmail.com
-
----
-
-# ⚖️ منصة استخراج المصطلحات القانونية وتوليد البطاقات الترجمية
-
-منصة ذكية مخصصة لصالح المجمع القانوني الليبي (شبكة التشريعات الليبية) تعتمد على معالجة اللغات الطبيعية ونماذج الذكاء الاصطناعي لاستخراج المصطلحات القانونية الموضوعية المصفاة من ملفات الذاكرة الترجمية (.tmx) التي قام المستخدم بإنشائها ومحاذاتها يدوياً، مع تطبيق هندسة الأوامر وقواعد التصفية الدقيقة، وتصدير النتائج إلى مسارد Excel وبطاقات معجمية موثقة بصيغة Word.
-
----
-
-## 📋 متطلبات التشغيل والمستلزمات
-
-لتشغيل المنصة واستخراج المصطلحات بنجاح، يحتاج المستخدم إلى:
-
-* **ملف ذاكرة ترجمية محاذى يدوياً (.tmx):** رفع ملف TMX ثنائي اللغة يحتوي على وحدات ترجمة تم إعدادها ومحاذاتها يدوياً من قبل المستخدم.
-* **مفتاح API من OpenRouter:** إدخال مفتاح API الخاص المستخدم (`sk-or-v1-...`) في الشريط الجانبي لتفعيل عملية الاستخراج.
-
----
-
-## 🤖 النماذج ورصيد الحساب
-
-النماذج المتاحة: تتيح المنصة التبديل بين مجموعة نماذج مدفوعة ومتقدمة عبر OpenRouter تتميز بالدقة الفائقة في معالجة اللغة العربية والالتزام بالمخرجات الهيكلية:
-
-* `qwen/qwen3.5-flash-02-23` (Qwen 3.5 Flash)
-* `anthropic/claude-haiku-5.5` (Claude Haiku 5.5)
-* `google/gemini-3.8-flash` (Gemini 3.8 Flash)
-* `openai/gpt-4o-mini` (GPT-4o Mini)
-* `meta-llama/llama-4-maverick` (Llama 4 Maverick)
-
-> 💡 **ملاحظة هامة:** وجود رصيد رمزي بسيط (حتى لو 2 دولار فقط) في حساب OpenRouter الخاص بك يلغي قيود معدل الطلبات (Rate Limits / Error 429) كلياً ويمنع حدوث الأخطاء أو التوقف أثناء أوقات الضغط العالي.
-
----
-
-## ⚙️ آلية العمل ومراحل المعالجة (Pre-processing & Process)
-
-تعتمد المنصة على خط إنتاج برمجي دقيق يمر بمرحلتين أساسيتين:
-
-* **مرحلة المعالجة الأولية (Pre-processing):** قراءة ملفات الذاكرة الترجمية المحاذاة يدوياً، تنظيف النصوص من وسوم XML والرموز التشويقية، وتصفية الوحدات غير الصالحة للتحليل لضمان نقاء النصوص الموازية.
-* **مرحلة المعالجة والتحليل الذكي (Process):** توظيف هندسة الأوامر (Prompt Engineering) المتقدمة مع تطبيق قواعد التصفية الصارمة (Strict Negative Directives) لاستبعاد عبارات الديباجة، المقدمات الإجرائية، والتواريخ، وتوجيه النماذج للتركيز الحصري على استخراج وتوحيد صياغة المفاهيم والمؤسسات القانونية الموضوعية بدقة متناهية.
-
----
-
-## 🚀 المميزات الرئيسية
-
-* 📂 **دعم ملفات TMX المحاذاة يدوياً:** معالجة وحدات الترجمة الثنائية التي أعدها المستخدم بعناية.
-* 🛡️ **هندسة الأوامر والتصفية الصارمة (Strict Negative Directives & Prompt Engineering):** استخدام تعليمات برمجية واضحة لاستبعاد عبارات الديباجة والإجراءات والتواريخ والتركيز على المفاهيم الموضوعية.
-* 🤖 **دعم متعدد للنماذج:** إمكانية اختيار النموذج المناسب لمعالجة النصوص القانونية عبر OpenRouter.
-* 💾 **حفظ النتائج وحمايتها (`st.session_state`):** ضمان استمرار عرض النتائج في الجدول التفاعلي ومنع اختفائها أثناء التفاعل أو التحميل.
-* 🎨 **واجهة عربية تفاعلية عصرية:** تصميم Dark Mode متجاوب مع تنسيقات CSS، عنوان النافذة والأيقونة، خلفية شفافة عصرية، وشعارات موثقة للقسم والمجمع.
-* 📄 **تصدير متعدد الصيغ:**
-  * **ملف Excel (.xlsx):** مسرد مصطلحي مصفى (مستبعد منه عمود POS تلقائياً).
-  * **وثيقة Word (.docx):** بطاقات ترجمية موثقة ومعتمدة باسم المجمع القانوني الليبي.
-
----
-
-## 🛠️ التقنيات المستخدمة
-
-* Python
-* Streamlit
-* OpenAI / OpenRouter API
-* Pandas & OpenPyXL
-* Python-Docx & ElementTree
-
----
-
-## 👤 إعداد وتطوير
-
-* **المطور:** يوسف نورالدين بشير المقعمز
-* **التخصص:** شعبة الترجمة - كلية اللغات - جامعة طرابلس
-* **المرجعية التشريعية:** المجمع القانوني الليبي (شبكة التشريعات الليبية - lawsociety.ly)
-* **التواصل:** +218 92 8756918 | ywsfalmqmz@gmail.com
-* 
+    for tu in root.findall('.//tu'):
+        tuv_en = tu.find(".//tuv[@xml:lang='en']/seg", namespaces={'xml': '[http://www.w3.org/XML/1998/namespace](http://www.w3.org/XML/1998/namespace)'})
+        tuv_ar = tu.find(".//tuv[@xml:lang='ar']/seg", namespaces={'xml': '[http://www.w3.org/XML/1998/namespace](http://www.w3.org/XML/1998/namespace)'})
+        
+        if tuv_en is not None and tuv_ar is not None:
+            clean_en = re.sub(r'<[^>]+>', '', tuv_en.text or '').strip()
+            clean_ar = re.sub(r'<[^>]+>', '', tuv_ar.text or '').strip()
+            
+            if clean_en and clean_ar:
+                parallel_units.append({'en': clean_en, 'ar': clean_ar})
+                
+    return parallel_units

@@ -162,14 +162,22 @@ def normalize_text(text):
   return text.replace("\u00a0", " ")
 
 
-def _ocr_page(page):
+def _ocr_page(page, document_language="auto"):
+  """OCR بإعداد مناسب لتخطيط الصفحة واللغة، مع الحفاظ على دقة 300 DPI."""
   pix = page.get_pixmap(dpi=OCR_DPI, colorspace=fitz.csGRAY)
   img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
-  return pytesseract.image_to_string(img, lang="ara+eng", config="--oem 1 --psm 6")
+
+  # اختبارات ar22.pdf أظهرت أن PSM 6 أسقط أسطراً عربية كاملة،
+  # بينما PSM 11 التقط نص المادة الأولى وجملة تنفيذ القرار.
+  # نبقي PSM 6 للإنجليزية لأن استخراجه كان يعمل بصورة أفضل في ملف المستخدم.
+  psm = 11 if document_language == "ar" else 6
+  return pytesseract.image_to_string(
+      img, lang="ara+eng", config=f"--oem 1 --psm {psm}"
+  )
 
 
 @st.cache_data(show_spinner="⏳ جاري استخراج النص من الملف...")
-def extract_text_from_pdf_bytes(data):
+def extract_text_from_pdf_bytes(data, document_language="auto"):
     """استخراج هجين لكل صفحة، مع كشف الصفحات التي يبدو أن طبقة النص فيها ناقصة."""
     pages_text, notes = [], []
     doc = fitz.open(stream=data, filetype="pdf")
@@ -207,7 +215,7 @@ def extract_text_from_pdf_bytes(data):
             should_ocr = len(txt.strip()) < MIN_PAGE_CHARS or has_images
             if should_ocr:
                 try:
-                    ocr_txt = _ocr_page(page)
+                    ocr_txt = _ocr_page(page, document_language)
                     current_len = len(re.sub(r"\s+", "", txt))
                     ocr_len = len(re.sub(r"\s+", "", ocr_txt))
 
@@ -709,8 +717,8 @@ with tab1:
     )
 
   if pdf_en and pdf_ar:
-    text_en, notes_en = extract_text_from_pdf_bytes(pdf_en.getvalue())
-    text_ar, notes_ar = extract_text_from_pdf_bytes(pdf_ar.getvalue())
+    text_en, notes_en = extract_text_from_pdf_bytes(pdf_en.getvalue(), document_language="en")
+    text_ar, notes_ar = extract_text_from_pdf_bytes(pdf_ar.getvalue(), document_language="ar")
 
     if text_en.strip() and text_ar.strip():
       st.success("✅ تم استخراج النصوص بنجاح!")

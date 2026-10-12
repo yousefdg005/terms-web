@@ -7,3 +7,6 @@ pdfplumber
 reportlab
 arabic-reshaper
 python-bidi
+pytesseract
+PyMuPDF
+Pillow

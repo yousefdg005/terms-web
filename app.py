@@ -403,8 +403,11 @@ tab1, tab2 = st.tabs(
 import json
 import streamlit.components.v1 as components
 
+import json
+import streamlit.components.v1 as components
+
 # ---------------------------------------------------------
-# Tab 1: استوديو المحاذاة بالسحب والإفلات الحر (MateCat Drag & Drop)
+# Tab 1: استوديو المحاذاة الشامل الاحترافي (MateCat Studio Full)
 # ---------------------------------------------------------
 with tab1:
   st.subheader("📄 الخطوة 1: رفع ملفات PDF واستخراج النصوص")
@@ -436,13 +439,15 @@ with tab1:
         lines_ar.append("")
 
       st.markdown("---")
-      st.subheader("🧩 الخطوة 2: استوديو المحاذاة بالسحب والإفلات (MateCat Alignment)")
+      st.subheader(
+          "🧩 الخطوة 2: استوديو المحاذاة التفاعلي (MateCat Alignment Studio)"
+      )
       st.caption(
-          "💡 **طريقة الاستخدام:** يمكنك سحب وإفلات أي بطاقة عربية أو إنجليزية"
-          " بالماوس وإعادة ترتيبها بحرية لتنطبق مع النص المقابل!"
+          "💡 **الميزات المتاحة:** السحب والإفلات الحر مع التمرير التلقائي"
+          " للشاشة | زر التقسيم ✂️ عند مؤشر الكتابة | زر الحذف 🗑️ | زر إضافة"
+          " وحدة جديدة."
       )
 
-      # بناء واجهة HTML/JS للسحب والإفلات الحر
       pairs_json = json.dumps(
           [{"en": en, "ar": ar} for en, ar in zip(lines_en, lines_ar)]
       )
@@ -450,22 +455,55 @@ with tab1:
       html_code = f"""
             <style>
                 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@600;700&display=swap');
+                * {{ box-sizing: border-box; }}
                 body {{ font-family: 'Cairo', sans-serif; background-color: #0B0F19; color: #E5E7EB; margin: 0; padding: 10px; }}
-                .alignment-container {{ display: flex; flex-direction: column; gap: 10px; direction: rtl; }}
-                .segment-row {{ display: flex; gap: 15px; background: #111827; border: 1px solid #374151; border-radius: 10px; padding: 10px; align-items: center; }}
-                .segment-num {{ color: #EAB308; font-weight: bold; width: 40px; text-align: center; font-size: 14px; }}
-                .card-box {{ flex: 1; background: #1E293B; border: 1px dashed #475569; border-radius: 8px; padding: 10px; min-height: 50px; cursor: grab; transition: all 0.2s ease; }}
-                .card-box:active {{ cursor: grabbing; background: #334155; border-color: #EAB308; }}
+                
+                /* القاوية الرئيسية مع التمرير السلس */
+                .alignment-container {{ display: flex; flex-direction: column; gap: 12px; direction: rtl; padding-bottom: 50px; }}
+                
+                .segment-row {{ 
+                    display: flex; gap: 12px; background: #111827; border: 1px solid #374151; 
+                    border-radius: 10px; padding: 12px; align-items: center; position: relative;
+                }}
+                .segment-row:hover {{ border-color: #4B5563; }}
+                
+                .segment-num {{ color: #EAB308; font-weight: bold; width: 45px; text-align: center; font-size: 14px; flex-shrink: 0; }}
+                
+                .card-box {{ 
+                    flex: 1; background: #1E293B; border: 1px solid #475569; border-radius: 8px; 
+                    padding: 10px 14px; min-height: 55px; cursor: grab; transition: all 0.2s ease;
+                }}
+                .card-box:active {{ cursor: grabbing; border-color: #EAB308; box-shadow: 0 0 10px rgba(234, 179, 8, 0.3); }}
                 .card-box[contenteditable="true"]:focus {{ outline: none; border-color: #EAB308; background: #0F172A; }}
-                .en-box {{ direction: ltr; text-align: left; color: #93C5FD; }}
-                .ar-box {{ direction: rtl; text-align: right; color: #FDE047; }}
-                .drag-over {{ border: 2px solid #EAB308 !important; background: rgba(234, 179, 8, 0.1) !important; }}
+                
+                .en-box {{ direction: ltr; text-align: left; color: #93C5FD; font-size: 14px; }}
+                .ar-box {{ direction: rtl; text-align: right; color: #FDE047; font-size: 14px; }}
+                
+                .drag-over {{ border: 2px dashed #EAB308 !important; background: rgba(234, 179, 8, 0.15) !important; }}
+                
+                /* أزرار التحكم لكل سطر */
+                .action-btn-group {{ display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }}
+                .btn-ctrl {{ 
+                    background: #1F2937; color: #E5E7EB; border: 1px solid #374151; border-radius: 6px; 
+                    padding: 4px 8px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; 
+                }}
+                .btn-ctrl:hover {{ background: #374151; color: #EAB308; }}
+                .btn-del:hover {{ background: #991B1B; color: #FFF; }}
+                
+                /* زر إضافة وحدة */
+                .add-row-btn {{
+                    background: linear-gradient(135deg, #EAB308 0%, #CA8A04 100%);
+                    color: #0F172A; font-weight: bold; border: none; border-radius: 8px;
+                    padding: 10px 20px; cursor: pointer; font-family: 'Cairo', sans-serif;
+                    margin-bottom: 15px; display: inline-block;
+                }}
             </style>
 
+            <button class="add-row-btn" onclick="addNewRow()">➕ إضافة وحدة محاذاة جديدة</button>
             <div class="alignment-container" id="alignmentContainer"></div>
 
             <script>
-                const data = {pairs_json};
+                let data = {pairs_json};
                 const container = document.getElementById('alignmentContainer');
 
                 function renderRows() {{
@@ -478,18 +516,23 @@ with tab1:
                             <div class="segment-num">[${{index + 1}}]</div>
                             <div class="card-box en-box" draggable="true" data-index="${{index}}" data-type="en" contenteditable="true">${{item.en}}</div>
                             <div class="card-box ar-box" draggable="true" data-index="${{index}}" data-type="ar" contenteditable="true">${{item.ar}}</div>
+                            <div class="action-btn-group">
+                                <button class="btn-ctrl" onclick="splitUnit(${{index}})" title="تقسيم عند مكان المؤشر">✂️ تقسيم</button>
+                                <button class="btn-ctrl btn-del" onclick="deleteRow(${{index}})" title="حذف هذه الوحدة">🗑️ حذف</button>
+                            </div>
                         `;
                         container.appendChild(row);
                     }});
 
-                    addDragListeners();
+                    addDragAndEditListeners();
                 }}
 
                 let draggedIndex = null;
                 let draggedType = null;
 
-                function addDragListeners() {{
+                function addDragAndEditListeners() {{
                     document.querySelectorAll('.card-box').forEach(box => {{
+                        // السحب والإفلات
                         box.addEventListener('dragstart', (e) => {{
                             draggedIndex = e.target.getAttribute('data-index');
                             draggedType = e.target.getAttribute('data-type');
@@ -500,6 +543,14 @@ with tab1:
                             e.preventDefault();
                             if (e.target.getAttribute('data-type') === draggedType) {{
                                 e.target.classList.add('drag-over');
+                            }}
+                            
+                            // التمرير التلقائي للشاشة (Auto-scroll) عند الوصول للأطراف
+                            const scrollThreshold = 80;
+                            if (e.clientY < scrollThreshold) {{
+                                window.scrollBy(0, -15);
+                            }} else if (window.innerHeight - e.clientY < scrollThreshold) {{
+                                window.scrollBy(0, 15);
                             }}
                         }});
 
@@ -514,7 +565,6 @@ with tab1:
                             const targetType = e.target.getAttribute('data-type');
 
                             if (draggedIndex !== null && targetType === draggedType) {{
-                                // تبديل النصوص بحرية وسحب وإفلات
                                 const temp = data[draggedIndex][draggedType];
                                 data[draggedIndex][draggedType] = data[targetIndex][draggedType];
                                 data[targetIndex][draggedType] = temp;
@@ -522,6 +572,7 @@ with tab1:
                             }}
                         }});
 
+                        // التعديل النصي المباشر
                         box.addEventListener('input', (e) => {{
                             const idx = e.target.getAttribute('data-index');
                             const type = e.target.getAttribute('data-type');
@@ -530,12 +581,58 @@ with tab1:
                     }});
                 }}
 
+                // دالة تقسيم الوحدة (Split)
+                function splitUnit(index) {{
+                    const selection = window.getSelection();
+                    if (!selection.rangeCount) return;
+
+                    const range = selection.getRangeAt(0);
+                    const focusNode = selection.focusNode;
+                    
+                    if (!focusNode) return;
+
+                    let targetBox = focusNode.parentElement;
+                    while (targetBox && !targetBox.classList.contains('card-box')) {{
+                        targetBox = targetBox.parentElement;
+                    }}
+
+                    if (targetBox) {{
+                        const type = targetBox.getAttribute('data-type');
+                        const text = targetBox.innerText;
+                        const offset = selection.focusOffset;
+
+                        const part1 = text.substring(0, offset).trim();
+                        const part2 = text.substring(offset).trim();
+
+                        if (part2) {{
+                            data[index][type] = part1;
+                            const newRow = {{ en: "", ar: "" }};
+                            newRow[type] = part2;
+                            data.splice(index + 1, 0, newRow);
+                            renderRows();
+                        }}
+                    }}
+                }}
+
+                // دالة حذف السطر
+                function deleteRow(index) {{
+                    data.splice(index, 1);
+                    renderRows();
+                }}
+
+                // دالة إضافة سطر جديد
+                function addNewRow() {{
+                    data.push({{ en: "", ar: "" }});
+                    renderRows();
+                    window.scrollTo(0, document.body.scrollHeight);
+                }}
+
                 renderRows();
             </script>
             """
 
-      # عرض واجهة السحب والإفلات
-      components.html(html_code, height=650, scrolling=True)
+      # زيادة الارتفاع لتمكين التمرير التلقائي السلس
+      components.html(html_code, height=800, scrolling=True)
 
       st.markdown("<br>", unsafe_allow_html=True)
 

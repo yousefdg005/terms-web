@@ -429,8 +429,11 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
   .segment-num { color:#EAB308; font-weight:bold; width:45px; text-align:center; font-size:14px; flex-shrink:0; }
   .cell { flex:1; display:flex; gap:6px; align-items:stretch; min-width:0; border:2px solid transparent; border-radius:8px; }
   .cell.drag-over { border:2px dashed #EAB308; background:rgba(234,179,8,.15); }
-  .handle { width:18px; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:#1F2937; border-radius:6px; color:#9CA3AF; cursor:grab; user-select:none; font-size:14px; }
+  .handle-container { display:flex; flex-direction:column; gap:2px; flex-shrink:0; align-items:center; justify-content:center; }
+  .handle { width:22px; height:22px; display:flex; align-items:center; justify-content:center; background:#1F2937; border-radius:4px; color:#9CA3AF; cursor:grab; user-select:none; font-size:12px; }
   .handle:active { cursor:grabbing; color:#EAB308; }
+  .move-btn { width:22px; height:18px; display:flex; align-items:center; justify-content:center; background:#374151; border:none; border-radius:4px; color:#D1D5DB; cursor:pointer; font-size:10px; padding:0; }
+  .move-btn:hover { background:#4B5563; color:#EAB308; }
   .card-box { flex:1; min-width:0; background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 14px; min-height:55px; font-size:14px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; cursor:text; }
   .card-box:focus { outline:none; border-color:#EAB308; background:#0F172A; }
   .en-box { direction:ltr; text-align:left; color:#93C5FD; }
@@ -440,24 +443,37 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
   .btn-ctrl:hover { background:#374151; color:#EAB308; }
   .btn-del:hover { background:#991B1B; color:#FFF; }
   .add-row-btn { background:linear-gradient(135deg,#EAB308 0%,#CA8A04 100%); color:#0F172A; font-weight:bold; border:none; border-radius:8px; padding:10px 20px; cursor:pointer; font-family:inherit; }
+  .undo-btn { background:#374151; color:#E5E7EB; border:1px solid #4B5563; border-radius:8px; padding:10px 15px; cursor:pointer; font-weight:bold; font-family:inherit; }
+  .undo-btn:hover { background:#4B5563; color:#FFF; }
 </style></head>
 <body>
-<div id="bar"><button class="add-row-btn" id="addBtn">➕ إضافة وحدة محاذاة جديدة</button><span id="toast"></span></div>
+<div id="bar">
+  <button class="add-row-btn" id="addBtn">➕ إضافة وحدة محاذاة جديدة</button>
+  <button class="undo-btn" id="undoBtn">↩️ تراجع</button>
+  <span id="toast"></span>
+</div>
 <div id="alignmentScroll" aria-label="منطقة تمرير وحدات المحاذاة"><div class="alignment-container" id="alignmentContainer"></div></div>
 <script>
   const container = document.getElementById('alignmentContainer');
   const toastEl = document.getElementById('toast');
-  let data = [], token = null, drag = null, sendTimer = null;
+  let data = [], historyStack = [], token = null, drag = null, sendTimer = null;
 
   function post(type, extra) { window.parent.postMessage(Object.assign({isStreamlitMessage:true, type}, extra||{}), '*'); }
   function pushValue() { post('streamlit:setComponentValue', {value: data.map(d => ({en:d.en, ar:d.ar})), dataType:'json'}); }
   function pushSoon() { clearTimeout(sendTimer); sendTimer = setTimeout(pushValue, 500); }
+  
+  function saveState() {
+    historyStack.push(JSON.stringify(data));
+    if (historyStack.length > 50) historyStack.shift();
+  }
+
   window.addEventListener('message', (ev) => {
     if (!ev.data || ev.data.type !== 'streamlit:render') return;
     const args = ev.data.args || {};
     if (args.token !== token) {
       token = args.token;
       data = (args.pairs || []).map(p => ({en: p.en || '', ar: p.ar || ''}));
+      historyStack = [];
       renderRows();
     }
   });
@@ -466,23 +482,56 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
 
   function toast(msg) { toastEl.textContent = msg; setTimeout(() => { if (toastEl.textContent === msg) toastEl.textContent = ''; }, 2500); }
 
+  function moveCell(index, type, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= data.length) return;
+    saveState();
+    const temp = data[index][type];
+    data[index][type] = data[targetIndex][type];
+    data[targetIndex][type] = temp;
+    renderRows(); pushValue();
+  }
+
   function makeCell(type, index) {
     const cell = document.createElement('div');
     cell.className = 'cell'; cell.dataset.index = index; cell.dataset.type = type;
+    
+    const handleContainer = document.createElement('div');
+    handleContainer.className = 'handle-container';
+    
+    const upBtn = document.createElement('button');
+    upBtn.className = 'move-btn'; upBtn.textContent = '▲'; upBtn.title = 'نقل للأعلى';
+    upBtn.onclick = () => moveCell(index, type, -1);
+    
     const handle = document.createElement('div');
     handle.className = 'handle'; handle.textContent = '⠿'; handle.draggable = true; handle.title = 'اسحب للتبديل';
+    
+    const downBtn = document.createElement('button');
+    downBtn.className = 'move-btn'; downBtn.textContent = '▼'; downBtn.title = 'نقل للأسفل';
+    downBtn.onclick = () => moveCell(index, type, 1);
+    
+    handleContainer.append(upBtn, handle, downBtn);
+
     const box = document.createElement('div');
     box.className = 'card-box ' + (type === 'en' ? 'en-box' : 'ar-box');
     box.dataset.index = index; box.dataset.type = type;
     box.contentEditable = 'plaintext-only';
     if (box.contentEditable !== 'plaintext-only') box.contentEditable = 'true';
     box.textContent = data[index][type];
+    
+    let prevText = box.textContent;
+    box.addEventListener('focus', () => { prevText = box.innerText; });
+    box.addEventListener('blur', () => {
+      const currentText = box.innerText.replace(/\n$/, '');
+      if (prevText !== currentText) { saveState(); data[index][type] = currentText; pushSoon(); }
+    });
     box.addEventListener('input', () => { data[index][type] = box.innerText.replace(/\n$/, ''); pushSoon(); });
     box.addEventListener('paste', (e) => {
       if (box.contentEditable === 'plaintext-only') return;
       e.preventDefault();
       document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
     });
+
     handle.addEventListener('dragstart', (e) => { drag = {index, type}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); });
     cell.addEventListener('dragover', (e) => {
       if (!drag || drag.type !== type) return;
@@ -490,17 +539,19 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
       const scroller = document.getElementById('alignmentScroll');
       const rect = scroller.getBoundingClientRect();
       const edge = 70;
-      if (e.clientY < rect.top + edge) scroller.scrollTop -= 15;
-      else if (rect.bottom - e.clientY < edge) scroller.scrollTop += 15;
+      if (e.clientY < rect.top + edge) scroller.scrollTop -= 20;
+      else if (rect.bottom - e.clientY < edge) scroller.scrollTop += 20;
     });
     cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
     cell.addEventListener('drop', (e) => {
       e.preventDefault(); cell.classList.remove('drag-over');
       if (!drag || drag.type !== type || drag.index === index) { drag = null; return; }
+      saveState();
       const t = data[drag.index][type]; data[drag.index][type] = data[index][type]; data[index][type] = t;
       drag = null; renderRows(); pushValue();
     });
-    cell.append(handle, box);
+    
+    cell.append(handleContainer, box);
     return cell;
   }
 
@@ -534,17 +585,30 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     const offset = Math.min(pre.toString().length, full.length);
     const part1 = full.slice(0, offset).trim(), part2 = full.slice(offset).trim();
     if (!part2) { toast('المؤشر في نهاية النص، لا يوجد ما يُقسَّم'); return; }
+    
+    saveState();
     data[index][type] = part1;
     const nr = {en: '', ar: ''}; nr[type] = part2;
     data.splice(index + 1, 0, nr);
     renderRows(); pushValue();
   }
 
-  function deleteRow(index) { data.splice(index, 1); renderRows(); pushValue(); }
+  function deleteRow(index) { saveState(); data.splice(index, 1); renderRows(); pushValue(); }
+  
   document.getElementById('addBtn').addEventListener('click', () => {
+    saveState();
     data.push({en: '', ar: ''}); renderRows(); pushValue();
     const scroller = document.getElementById('alignmentScroll');
     scroller.scrollTop = scroller.scrollHeight;
+  });
+
+  document.getElementById('undoBtn').addEventListener('click', () => {
+    if (historyStack.length === 0) {
+      toast('لا يوجد إجراء للتراجع عنه');
+      return;
+    }
+    data = JSON.parse(historyStack.pop());
+    renderRows(); pushValue();
   });
 </script></body></html>"""
 

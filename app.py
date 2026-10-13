@@ -1,7 +1,3 @@
-"""
-AI Legal Workspace — Alignment Studio + Term Extractor
-Enhanced & Debugged Version — (c) Youssef Nour Eldin
-"""
 import base64
 import hashlib
 import io
@@ -11,36 +7,38 @@ import re
 import time
 import unicodedata
 import xml.etree.ElementTree as ET
-from difflib import SequenceMatcher
 from html import escape as html_escape
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
-import numpy as np
+import arabic_reshaper
 import pandas as pd
-import streamlit as st
-import streamlit.components.v1 as components
+from bidi.algorithm import get_display
 from docx import Document
 from openai import OpenAI
-
-import arabic_reshaper
-from bidi.algorithm import get_display
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+import streamlit as st
+import streamlit.components.v1 as components
 
 # =========================================================
-# 1) إعداد الصفحة
+# 1. إعدادات صفحة Streamlit
 # =========================================================
 st.set_page_config(
-    page_title="AI Legal Workspace", page_icon="⚖️",
-    layout="wide", initial_sidebar_state="expanded",
+    page_title="AI Legal Workspace",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 
+# =========================================================
+# 2. تحميل ملف الـ CSS
+# =========================================================
 def load_css(file_name="style.css"):
     try:
         with open(file_name, "r", encoding="utf-8") as f:
@@ -53,290 +51,207 @@ load_css("style.css")
 
 
 # =========================================================
-# 2) الهيدر
+# 3. دالة معالجة النص العربي للـ PDF (ReportLab)
 # =========================================================
-st.markdown("""
+def prepare_arabic_text(text):
+    if not text or not isinstance(text, str):
+        return ""
+    reshaped_text = arabic_reshaper.reshape(text)
+    bidi_text = get_display(reshaped_text)
+    return bidi_text
+
+
+# =========================================================
+# 4. الهيدر العام للمنصة (Neutral Branding)
+# =========================================================
+st.markdown(
+    """
 <div class="header-container" style="direction: ltr; text-align: left;">
-  <div class="header-text">
-    <h1 style="color:#EAB308;margin:0;font-size:26px;font-weight:800;">⚖️ AI Legal Workspace</h1>
-    <p style="color:#F3F4F6;font-size:15px;margin-top:8px;">Your all-in-one AI toolkit for legal text alignment & term extraction</p>
-    <span style="color:#E5E7EB;font-size:13px;background:rgba(234,179,8,.15);padding:6px 18px;border-radius:20px;border:1px solid rgba(234,179,8,.4);">
-      Smart AI Engine | Developed by Youssef Nour Eldin 💻
-    </span>
-  </div>
+    <div class="header-text">
+        <h1 style="color: #EAB308; margin: 0; font-size: 26px; font-weight: 800;">⚖️ AI Legal Workspace</h1>
+        <p style="color: #F3F4F6; font-size: 15px; margin-top: 8px; margin-bottom: 12px;">Your all-in-one AI toolkit for legal text alignment, term extraction</p>
+        <span style="color: #E5E7EB; font-size: 13px; background: rgba(234, 179, 8, 0.15); padding: 6px 18px; border-radius: 20px; border: 1px solid rgba(234, 179, 8, 0.4);">
+                Smart AI Engine | Developed by Youssef Nour Eldin 💻
+        </span>
+    </div>
 </div>
-""", unsafe_allow_html=True)
-
+""",
+    unsafe_allow_html=True,
+)
 
 # =========================================================
-# 3) الشريط الجانبي
+# 5. الشريط الجانبي للإعدادات
 # =========================================================
 st.sidebar.header("⚙️ إعدادات النظام")
-st.sidebar.markdown("""
-<div style="background:#1E293B;padding:12px;border-radius:8px;border:1px solid #374151;margin-bottom:15px;text-align:center;">
-  <span style="color:#E5E7EB;font-size:13px;">ليس لديك مفتاح API؟</span><br>
-  <a href="https://openrouter.ai/keys" target="_blank" style="color:#EAB308;font-weight:bold;text-decoration:none;font-size:14px;">
-    🔗 الحصول على المفتاح من OpenRouter
-  </a>
+
+st.sidebar.markdown(
+    """
+<div style="background-color: #1E293B; padding: 12px; border-radius: 8px; border: 1px solid #374151; margin-bottom: 15px; text-align: center;">
+    <span style="color: #E5E7EB; font-size: 13px;">ليس لديك مفتاح API؟</span><br>
+    <a href="https://openrouter.ai/keys" target="_blank" style="color: #EAB308; font-weight: bold; text-decoration: none; font-size: 14px; display: inline-block; margin-top: 5px;">
+        🔗 الحصول على المفتاح من OpenRouter
+    </a>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 api_key = st.sidebar.text_input(
-    "🔑 مفتاح OpenRouter API Key:", value="", type="password",
+    "🔑 مفتاح OpenRouter API Key الخاص بك:",
+    value="",
+    type="password",
     placeholder="sk-or-v1-...",
 )
 
 PAID_MODELS_MAPPING = {
     "🌙 Qwen 3.5 Flash (الأقوى في معالجة اللغة العربية)": "qwen/qwen3.5-flash-02-23",
-    "📜 Claude Haiku 5.5 (التزام صارم بالتعليمات)": "anthropic/claude-haiku-5.5",
-    "⚡ Gemini 3.8 Flash (السياقات الطويلة)": "google/gemini-3.8-flash",
+    "📜 Claude Haiku 5.5 (التزام صارم بتعليمات التصفية)": "anthropic/claude-haiku-5.5",
+    "⚡ Gemini 3.8 Flash (معالجة السياقات الطويلة)": "google/gemini-3.8-flash",
     "⚖️ GPT-4o Mini (استخراج هيكلي دقيق)": "openai/gpt-4o-mini",
-    "🦙 Llama 4 Maverick (نموذج مفتوح)": "meta-llama/llama-4-maverick",
+    "🦙 Llama 4 Maverick (نموذج مفتوح متقدم)": "meta-llama/llama-4-maverick",
 }
-st.sidebar.subheader("🤖 اختيار النموذج")
+
+st.sidebar.subheader("🤖 اختيار النموذج المراد استعماله")
 selected_model_label = st.sidebar.selectbox(
-    "اختر النموذج:", options=list(PAID_MODELS_MAPPING.keys()), index=0,
+    "اختر النموذج لتنفيذ عملية التصفية والاستخراج:",
+    options=list(PAID_MODELS_MAPPING.keys()),
+    index=0,
 )
 selected_model_id = PAID_MODELS_MAPPING[selected_model_label]
 
 
 # =========================================================
-# 4) Session State — باستخدام .setdefault لتفادي KeyError
+# 6. إدارة حالة الجلسة (Session State)
 # =========================================================
-st.session_state.setdefault("aligned_pairs", [])
-st.session_state.setdefault("results_df", None)
-st.session_state.setdefault("tmx_bytes", None)
-st.session_state.setdefault("xlsx_bytes", None)
-st.session_state.setdefault("csv_bytes", None)
+if "aligned_pairs" not in st.session_state:
+    st.session_state["aligned_pairs"] = []
+if "results_df" not in st.session_state:
+    st.session_state["results_df"] = None
+if "tmx_bytes" not in st.session_state:
+    st.session_state["tmx_bytes"] = None
 
 
 # =========================================================
-# 5) أدوات التطبيع والتقسيم
+# 7. دوال استخراج وقراءة ملفات Word و TMX
 # =========================================================
 _INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 _XML_BAD_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
-# اختصارات قانونية لا تكسر الجملة
-_ABBREV = {
-    "mr", "mrs", "ms", "dr", "prof", "inc", "ltd", "co", "corp", "vs", "etc",
-    "no", "art", "sec", "vol", "ch", "pp", "ed", "al", "cf", "eg", "ie",
-    "paragraph", "para", "u.s", "u.k", "e.u", "u.n", "v", "p",
-}
 
-
-def normalize_text(text: str) -> str:
-    """توحيد Unicode + إزالة الأحرف الخفية."""
-    if not text:
-        return ""
-    text = unicodedata.normalize("NFKC", str(text))
+def normalize_text(text):
+    """توحيد الأحرف: NFKC يحوّل أشكال العرض العربية إلى حروف أصلية."""
+    text = unicodedata.normalize("NFKC", text)
     text = _INVISIBLE_RE.sub("", text)
     return text.replace("\u00a0", " ")
 
 
-def segment_sentences(text: str):
-    """
-    تقسيم الجمل القانونية مع حماية:
-      - الأرقام العشرية (1.5)
-      - الاختصارات (Art. No. Dr.)
-      - الفواصل العربية/الإنجليزية
-    """
-    if not text:
-        return []
-    # 1) حماية الأرقام العشرية
-    text = re.sub(r"(\d)\.(\d)", r"\1\uE000\2", text)
-    # 2) حماية الاختصارات
-    def _protect(m):
-        w = m.group(1).lower().rstrip(".")
-        return m.group(0).replace(".", "\uE000") if w in _ABBREV else m.group(0)
-    text = re.sub(r"\b([A-Za-z][A-Za-z\.]{0,9})\.", _protect, text)
-    # 3) التقسيم
-    parts = re.split(r"(?<=[.!?؟])\s+(?=[A-Za-z\u0600-\u06FF0-9\"'\(\[])|[؛;\n]+", text)
-    # 4) الاستعادة + التنظيف
-    out = []
-    for p in parts:
-        p = p.replace("\uE000", ".").strip()
-        if p:
-            out.append(re.sub(r"\s+", " ", p))
-    return out
-
-
-def extract_text_from_docx_bytes(data: bytes):
+def extract_text_from_docx_bytes(data):
+    """استخراج النصوص والفقرات والجداول من ملف Word (.docx) بشكل نظيف تماماً."""
     notes = []
     try:
         doc = Document(io.BytesIO(data))
-        paras = [normalize_text(p.text.strip()) for p in doc.paragraphs if p.text.strip()]
-        for t_idx, table in enumerate(doc.tables, 1):
-            for row in table.rows:
-                cells = [c.text.strip() for c in row.cells if c.text.strip()]
-                if cells:
-                    paras.append(normalize_text(" | ".join(cells)))
-            notes.append(f"تم استخراج محتوى الجدول #{t_idx}")
-        return "\n".join(paras), notes
+        paragraphs = []
+
+        # 1. استخراج النصوص من الفقرات
+        for p in doc.paragraphs:
+            txt = p.text.strip()
+            if txt:
+                paragraphs.append(normalize_text(txt))
+
+        # 2. استخراج محتوى الجداول إن وجدت
+        if doc.tables:
+            for table in doc.tables:
+                for row in table.rows:
+                    row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if row_cells:
+                        paragraphs.append(normalize_text(" | ".join(row_cells)))
+            notes.append(f"تم استخراج المحتوى من {len(doc.tables)} جدول/جداول داخل المستند")
+
+        return "\n\n".join(paragraphs), notes
     except Exception as e:
-        return "", [f"خطأ أثناء قراءة Word: {e}"]
+        return "", [f"خطأ أثناء قراءة ملف Word: {e}"]
 
 
-# =========================================================
-# 6) خوارزمية المحاذاة (DP — Gale-Church مبسّطة)
-# =========================================================
-def align_by_length(src_segs, tgt_segs, max_merge: int = 2):
-    """
-    محاذاة قائمة على نِسب الأطوال (Gale-Church مبسطة).
-    تسمح بالحركات: 1-1, 1-0, 0-1, 1-2, 2-1, 2-2.
-    الإرجاع: list[(en_text, ar_text)]
-    """
-    n, m = len(src_segs), len(tgt_segs)
-    if n == 0 and m == 0:
+def process_docx_text_to_segments(text):
+    """تقطيع نص الوورد إلى فقرات وجمل قانونية واضحة ومستقلة للمحاذاة."""
+    if not text:
         return []
-    # مسافات log لتفادي الانحياز للجمل الطويلة
-    src_len = np.array([max(len(s), 2) for s in src_segs] + [1], dtype=np.float64)
-    tgt_len = np.array([max(len(t), 2) for t in tgt_segs] + [1], dtype=np.float64)
 
-    INF = 1e18
-    cost = np.full((n + 1, m + 1), INF)
-    back = np.full((n + 1, m + 1, 2), -1, dtype=np.int32)
-    cost[0, 0] = 0.0
-
-    DEL_PEN, MERGE_PEN = 0.85, 0.20  # عقوبات الإدراج/الحذف/الدمج
-
-    for i in range(n + 1):
-        for j in range(m + 1):
-            c = cost[i, j]
-            if c >= INF:
-                continue
-            # 1-1
-            if i < n and j < m:
-                d = abs(np.log(src_len[i] / tgt_len[j]))
-                if c + d < cost[i + 1, j + 1]:
-                    cost[i + 1, j + 1] = c + d
-                    back[i + 1, j + 1] = (i, j)
-            # 1-0
-            if i < n and c + DEL_PEN < cost[i + 1, j]:
-                cost[i + 1, j] = c + DEL_PEN
-                back[i + 1, j] = (i, j)
-            # 0-1
-            if j < m and c + DEL_PEN < cost[i, j + 1]:
-                cost[i, j + 1] = c + DEL_PEN
-                back[i, j + 1] = (i, j)
-            # 1-2 و 2-1
-            if max_merge >= 2:
-                if i < n and j + 1 < m:
-                    d = abs(np.log(src_len[i] / (tgt_len[j] + tgt_len[j + 1]))) + MERGE_PEN
-                    if c + d < cost[i + 1, j + 2]:
-                        cost[i + 1, j + 2] = c + d
-                        back[i + 1, j + 2] = (i, j)
-                if i + 1 < n and j < m:
-                    d = abs(np.log((src_len[i] + src_len[i + 1]) / tgt_len[j])) + MERGE_PEN
-                    if c + d < cost[i + 2, j + 1]:
-                        cost[i + 2, j + 1] = c + d
-                        back[i + 2, j + 1] = (i, j)
-            # 2-2
-            if max_merge >= 2 and i + 1 < n and j + 1 < m:
-                d = abs(np.log((src_len[i] + src_len[i + 1]) /
-                               (tgt_len[j] + tgt_len[j + 1]))) + 2 * MERGE_PEN
-                if c + d < cost[i + 2, j + 2]:
-                    cost[i + 2, j + 2] = c + d
-                    back[i + 2, j + 2] = (i, j)
-
-    # Backtrack
-    pairs, i, j = [], n, m
-    while i > 0 or j > 0:
-        pi, pj = back[i, j]
-        if pi < 0 or pj < 0:
-            break
-        en = " ".join(src_segs[pi:i]).strip()
-        ar = " ".join(tgt_segs[pj:j]).strip()
-        pairs.append((en, ar))
-        i, j = int(pi), int(pj)
-    pairs.reverse()
-    return pairs
-
-
-def fuzzy_score(a: str, b: str) -> float:
-    """درجة تشابه حروف (لعرضها فقط / Debug)."""
-    return SequenceMatcher(None, a or "", b or "").ratio()
-
-
-# =========================================================
-# 7) TMX / Excel / CSV
-# =========================================================
-def _xml_safe(t):
-    return xml_escape(_XML_BAD_RE.sub("", str(t)))
-
-
-def generate_tmx_file(pairs) -> bytes:
-    """TMX 1.4 مع UTF-8 و معالجة XML آمنة."""
-    parts = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<tmx version="1.4">',
-        '<header creationtool="AI Legal Workspace" creationtoolversion="2.1" '
-        'segtype="sentence" adminlang="en-us" srclang="en" datatype="plaintext"/>',
-        "<body>",
-    ]
-    for en, ar in pairs:
-        parts.append(
-            f'  <tu>\n'
-            f'    <tuv xml:lang="en"><seg>{_xml_safe(en)}</seg></tuv>\n'
-            f'    <tuv xml:lang="ar"><seg>{_xml_safe(ar)}</seg></tuv>\n'
-            f'  </tu>'
-        )
-    parts.append("</body>\n</tmx>")
-    return "\n".join(parts).encode("utf-8")
-
-
-def parse_tmx_bytes(content: bytes):
-    """قراءة TMX بشكل آمن حتى لو احتوى BOM أو وسوم مختلفة."""
-    pairs = []
-    try:
-        root = ET.fromstring(content)
-    except ET.ParseError as e:
-        st.error(f"❌ فشل قراءة TMX: {e}")
-        return pairs
-    for tu in root.iter():
-        if not tu.tag.endswith("tu"):
+    segments = []
+    for paragraph in text.split("\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
             continue
-        en, ar = "", ""
-        for tuv in tu:
-            if not tuv.tag.endswith("tuv"):
-                continue
-            lang = next((v.lower() for k, v in tuv.attrib.items() if "lang" in k.lower()), "")
-            seg = next(("".join(s.itertext()) for s in tuv if s.tag.endswith("seg")), "").strip()
-            if lang.startswith("en"):
-                en = seg
-            elif lang.startswith("ar"):
-                ar = seg
-        if en and ar:
-            pairs.append((normalize_text(en), normalize_text(ar)))
+
+        # تقسيم الفقرة إلى جمل بناءً على علامات الترقيم (. ! ؟ ؛ ;)
+        sentence_endings = r"(?<=[.!?؛;])\s+"
+        sentences = re.split(sentence_endings, paragraph)
+        for sent in sentences:
+            sent_clean = re.sub(r"\s+", " ", sent).strip()
+            if sent_clean:
+                segments.append(sent_clean)
+
+    return segments
+
+
+def parse_tmx_bytes(tmx_content):
+    tree = ET.ElementTree(ET.fromstring(tmx_content))
+    root = tree.getroot()
+    pairs = []
+    for tu in root.iter():
+        if tu.tag.endswith("tu"):
+            en_text, ar_text = "", ""
+            for tuv in tu.iter():
+                if tuv.tag.endswith("tuv"):
+                    lang = ""
+                    for attr_k, attr_v in tuv.attrib.items():
+                        if "lang" in attr_k.lower():
+                            lang = attr_v.lower()
+                            break
+                    seg_text = ""
+                    for elem in tuv.iter():
+                        if elem.tag.endswith("seg"):
+                            seg_text = "".join(elem.itertext()).strip()
+                            break
+                    if lang.startswith("en"):
+                        en_text = seg_text
+                    elif lang.startswith("ar"):
+                        ar_text = seg_text
+            if en_text and ar_text:
+                pairs.append((en_text, ar_text))
     return pairs
 
 
-def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        df.to_excel(w, index=False)
-    buf.seek(0)
-    return buf.getvalue()
+def _xml_safe(text):
+    return xml_escape(_XML_BAD_RE.sub("", str(text)))
 
 
-def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
-    """UTF-8 BOM لضمان فتحه صحيحاً في Excel العربي."""
-    return df.to_csv(index=False).encode("utf-8-sig")
+def generate_tmx_file(pairs):
+    tmx_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="General Legal Terminology Platform" creationtoolversion="2.0" segtype="sentence" adminlang="en-us" srclang="en" datatype="plaintext"/>
+  <body>
+"""
+    for en, ar in pairs:
+        tmx_xml += f"""    <tu>
+      <tuv xml:lang="en"><seg>{_xml_safe(en)}</seg></tuv>
+      <tuv xml:lang="ar"><seg>{_xml_safe(ar)}</seg></tuv>
+    </tu>\n"""
+    tmx_xml += "  </body>\n</tmx>"
+    return tmx_xml.encode("utf-8")
 
 
 # =========================================================
-# 8) توليد بطاقات PDF
+# 8. دالة توليد بطاقات الـ PDF الفاخرة
 # =========================================================
-def prepare_arabic_text(text):
-    if not text or not isinstance(text, str):
-        return ""
-    return get_display(arabic_reshaper.reshape(text))
-
-
 _FONT_CANDIDATES = [
     ("fonts/Amiri-Regular.ttf", "fonts/Amiri-Bold.ttf"),
     ("fonts/NotoNaskhArabic-Regular.ttf", "fonts/NotoNaskhArabic-Bold.ttf"),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ("/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"),
     ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+    ("C:/Windows/Fonts/tahoma.ttf", "C:/Windows/Fonts/tahomabd.ttf"),
+    ("/Library/Fonts/Arial Unicode.ttf", "/Library/Fonts/Arial Unicode.ttf"),
     ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
 ]
 _PDF_FONTS = None
@@ -364,10 +279,12 @@ def _wrap_logical(text, font, size, max_width):
     for word in str(text).split():
         cand = f"{cur} {word}".strip()
         if cur and pdfmetrics.stringWidth(prepare_arabic_text(cand), font, size) > max_width:
-            lines.append(cur); cur = word
+            lines.append(cur)
+            cur = word
         else:
             cur = cand
-    if cur: lines.append(cur)
+    if cur:
+        lines.append(cur)
     return lines or [""]
 
 
@@ -378,246 +295,405 @@ def ar_par(text, style, max_width):
 
 
 def en_par(text, style):
-    return Paragraph(html_escape(str(text or "")), style)
+    return Paragraph(html_escape(str(text)), style)
 
 
-def generate_pdf_cards_bytes(df: pd.DataFrame) -> bytes:
+def generate_pdf_cards_bytes(df):
     font, font_bold = get_pdf_fonts()
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
-    ss = getSampleStyleSheet()
-    title_st = ParagraphStyle("T", parent=ss["Heading1"], fontName=font_bold, fontSize=18,
-                              alignment=1, textColor=colors.HexColor("#0F172A"), leading=26)
-    sub_st = ParagraphStyle("S", parent=ss["Normal"], fontName=font, fontSize=10,
-                            alignment=1, textColor=colors.HexColor("#64748B"), leading=14)
-    ct_st = ParagraphStyle("CT", fontName=font_bold, fontSize=10, alignment=2,
-                           leading=15, textColor=colors.HexColor("#1E293B"))
-    cv_st = ParagraphStyle("CV", fontName=font, fontSize=10, alignment=2,
-                           leading=15, textColor=colors.HexColor("#0F172A"))
-    cv_en = ParagraphStyle("CVE", parent=cv_st, alignment=0)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
 
-    story = [
-        ar_par("بطاقات المصطلحات القانونية الموثقة", title_st, 520),
-        ar_par("منصة التحليل والاستخراج القانوني الذكي | إعداد: يوسف نورالدين", sub_st, 520),
-        Spacer(1, 15),
-    ]
+    title_style = ParagraphStyle(
+        "TitleStyle",
+        parent=styles["Heading1"],
+        fontName=font_bold,
+        fontSize=18,
+        alignment=1,
+        textColor=colors.HexColor("#0F172A"),
+        leading=26,
+    )
+    sub_style = ParagraphStyle(
+        "SubStyle",
+        parent=styles["Normal"],
+        fontName=font,
+        fontSize=10,
+        alignment=1,
+        textColor=colors.HexColor("#64748B"),
+        leading=14,
+    )
+    cell_title_style = ParagraphStyle(
+        "CellTitle",
+        fontName=font_bold,
+        fontSize=10,
+        alignment=2,
+        leading=15,
+        textColor=colors.HexColor("#1E293B"),
+    )
+    cell_val_style = ParagraphStyle(
+        "CellVal",
+        fontName=font,
+        fontSize=10,
+        alignment=2,
+        leading=15,
+        textColor=colors.HexColor("#0F172A"),
+    )
+    cell_val_en_style = ParagraphStyle("CellValEn", parent=cell_val_style, alignment=0)
+
     VAL_W, LBL_W, PAD = 360, 160, 6
-    vw, lw = VAL_W - 2 * PAD - 4, LBL_W - 2 * PAD - 4
+    val_text_w = VAL_W - 2 * PAD - 4
+    lbl_text_w = LBL_W - 2 * PAD - 4
+
+    story.append(ar_par("بطاقات المصطلحات القانونية الموثقة (Legal Terminology Cards)", title_style, 520))
+    story.append(ar_par("منصة التحليل والاستخراج القانوني الذكي | إعداد: يوسف نورالدين", sub_style, 520))
+    story.append(Spacer(1, 15))
+
     total = len(df)
-    for n, (_, row) in enumerate(df.iterrows(), 1):
-        story.append(ar_par(f"بطاقة مصطلح ({n:02d} / {total:02d})", ct_st, 520))
+    for n, (_, row) in enumerate(df.iterrows(), start=1):
+        story.append(ar_par(f"بطاقة مصطلح رقم: ({n:02d} / {total:02d})", cell_title_style, 520))
         story.append(Spacer(1, 5))
-        L = lambda t: ar_par(t, ct_st, lw)
-        A = lambda k, d="": ar_par(str(row.get(k) or d), cv_st, vw)
+
+        def lbl(t):
+            return ar_par(t, cell_title_style, lbl_text_w)
+
+        def ar_val(key, default=""):
+            return ar_par(str(row.get(key, default) or default), cell_val_style, val_text_w)
+
         data = [
-            [en_par(row.get("English Term", ""), cv_en), L("المصطلح بالإنجليزي")],
-            [A("Arabic Term"), L("المقابل بالعربي")],
-            [A("Sub Domain", "قانون عام"), L("المجال الفرعي")],
-            [A("Document Type", "نص قانوني"), L("نوع المستند")],
-            [en_par(row.get("Source EN", ""), cv_en), L("السياق الإنجليزي")],
-            [A("Source AR"), L("السياق العربي")],
-            [A("Arabic Description"), L("الشرح والتعريف")],
+            [en_par(row.get("English Term", ""), cell_val_en_style), lbl("المصطلح بالإنجليزي (English Term)")],
+            [ar_val("Arabic Term"), lbl("المقابل بالعربي (Arabic Term)")],
+            [ar_val("Sub Domain", "قانون عام"), lbl("المجال الفرعي (Sub-Domain)")],
+            [ar_val("Document Type", "نص قانوني عام"), lbl("نوع المستند (Document Type)")],
+            [en_par(row.get("Source EN", ""), cell_val_en_style), lbl("السياق الإنجليزي (Context EN)")],
+            [ar_val("Source AR"), lbl("السياق العربي (Context AR)")],
+            [ar_val("Arabic Description"), lbl("الشرح والتعريف (Legal Description)")],
         ]
+
         t = Table(data, colWidths=[VAL_W, LBL_W])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("PADDING", (0, 0), (-1, -1), PAD),
-        ]))
-        story += [t, Spacer(1, 15),
-                  HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0"), spaceAfter=15)]
+        t.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("PADDING", (0, 0), (-1, -1), PAD),
+            ])
+        )
+        story.append(t)
+        story.append(Spacer(1, 15))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0"), spaceAfter=15))
+
     doc.build(story)
-    buf.seek(0)
-    return buf.getvalue()
+    buffer.seek(0)
+    return buffer
 
 
 # =========================================================
-# 9) التبويبات
+# 9. علامات التبويب الرئيسية (Tabs)
 # =========================================================
-tab1, tab2 = st.tabs(["🧩 Alignment Studio", "🔍 AI Term Extractor"])
+tab1, tab2 = st.tabs(["Alignment Studio (beta)", "AI Term Extractor"])
+
+
+# =========================================================
+# مكوّن استوديو المحاذاة (ثنائي الاتجاه)
+# =========================================================
+ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
+<html lang="ar"><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { font-family: 'Cairo','Segoe UI',Tahoma,Arial,sans-serif; background:#0B0F19; color:#E5E7EB; margin:0; padding:10px; overflow:hidden; }
+  #bar { display:flex; gap:10px; align-items:center; margin-bottom:12px; direction:rtl; }
+  #toast { color:#FDE047; font-size:13px; }
+  #alignmentScroll {
+    height: 610px;
+    max-height: calc(100vh - 135px);
+    min-height: 240px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+    border: 1px solid #374151;
+    border-radius: 10px;
+    background: #0F172A;
+    scrollbar-width: auto;
+    scrollbar-color: #64748B #1E293B;
+    overscroll-behavior: contain;
+  }
+  #alignmentScroll::-webkit-scrollbar { width: 12px; }
+  #alignmentScroll::-webkit-scrollbar-track { background: #1E293B; border-radius: 8px; }
+  #alignmentScroll::-webkit-scrollbar-thumb { background: #64748B; border: 2px solid #1E293B; border-radius: 8px; }
+  #alignmentScroll::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+  .alignment-container { display:flex; flex-direction:column; gap:12px; direction:rtl; padding-bottom:12px; }
+  .segment-row { display:flex; gap:12px; background:#111827; border:1px solid #374151; border-radius:10px; padding:12px; align-items:center; }
+  .segment-row:hover { border-color:#4B5563; }
+  .segment-num { color:#EAB308; font-weight:bold; width:45px; text-align:center; font-size:14px; flex-shrink:0; }
+  .cell { flex:1; display:flex; gap:6px; align-items:stretch; min-width:0; border:2px solid transparent; border-radius:8px; }
+  .cell.drag-over { border:2px dashed #EAB308; background:rgba(234,179,8,.15); }
+  .handle { width:18px; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:#1F2937; border-radius:6px; color:#9CA3AF; cursor:grab; user-select:none; font-size:14px; }
+  .handle:active { cursor:grabbing; color:#EAB308; }
+  .card-box { flex:1; min-width:0; background:#1E293B; border:1px solid #475569; border-radius:8px; padding:10px 14px; min-height:55px; font-size:14px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; cursor:text; }
+  .card-box:focus { outline:none; border-color:#EAB308; background:#0F172A; }
+  .en-box { direction:ltr; text-align:left; color:#93C5FD; }
+  .ar-box { direction:rtl; text-align:right; color:#FDE047; }
+  .action-btn-group { display:flex; flex-direction:column; gap:5px; flex-shrink:0; }
+  .btn-ctrl { background:#1F2937; color:#E5E7EB; border:1px solid #374151; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:bold; cursor:pointer; font-family:inherit; }
+  .btn-ctrl:hover { background:#374151; color:#EAB308; }
+  .btn-del:hover { background:#991B1B; color:#FFF; }
+  .add-row-btn { background:linear-gradient(135deg,#EAB308 0%,#CA8A04 100%); color:#0F172A; font-weight:bold; border:none; border-radius:8px; padding:10px 20px; cursor:pointer; font-family:inherit; }
+</style></head>
+<body>
+<div id="bar"><button class="add-row-btn" id="addBtn">➕ إضافة وحدة محاذاة جديدة</button><span id="toast"></span></div>
+<div id="alignmentScroll" aria-label="منطقة تمرير وحدات المحاذاة"><div class="alignment-container" id="alignmentContainer"></div></div>
+<script>
+  const container = document.getElementById('alignmentContainer');
+  const toastEl = document.getElementById('toast');
+  let data = [], token = null, drag = null, sendTimer = null;
+
+  function post(type, extra) { window.parent.postMessage(Object.assign({isStreamlitMessage:true, type}, extra||{}), '*'); }
+  function pushValue() { post('streamlit:setComponentValue', {value: data.map(d => ({en:d.en, ar:d.ar})), dataType:'json'}); }
+  function pushSoon() { clearTimeout(sendTimer); sendTimer = setTimeout(pushValue, 500); }
+  window.addEventListener('message', (ev) => {
+    if (!ev.data || ev.data.type !== 'streamlit:render') return;
+    const args = ev.data.args || {};
+    if (args.token !== token) {
+      token = args.token;
+      data = (args.pairs || []).map(p => ({en: p.en || '', ar: p.ar || ''}));
+      renderRows();
+    }
+  });
+  post('streamlit:componentReady', {apiVersion: 1});
+  post('streamlit:setFrameHeight', {height: 800});
+
+  function toast(msg) { toastEl.textContent = msg; setTimeout(() => { if (toastEl.textContent === msg) toastEl.textContent = ''; }, 2500); }
+
+  function makeCell(type, index) {
+    const cell = document.createElement('div');
+    cell.className = 'cell'; cell.dataset.index = index; cell.dataset.type = type;
+    const handle = document.createElement('div');
+    handle.className = 'handle'; handle.textContent = '⠿'; handle.draggable = true; handle.title = 'اسحب للتبديل';
+    const box = document.createElement('div');
+    box.className = 'card-box ' + (type === 'en' ? 'en-box' : 'ar-box');
+    box.dataset.index = index; box.dataset.type = type;
+    box.contentEditable = 'plaintext-only';
+    if (box.contentEditable !== 'plaintext-only') box.contentEditable = 'true';
+    box.textContent = data[index][type];
+    box.addEventListener('input', () => { data[index][type] = box.innerText.replace(/\n$/, ''); pushSoon(); });
+    box.addEventListener('paste', (e) => {
+      if (box.contentEditable === 'plaintext-only') return;
+      e.preventDefault();
+      document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
+    });
+    handle.addEventListener('dragstart', (e) => { drag = {index, type}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); });
+    cell.addEventListener('dragover', (e) => {
+      if (!drag || drag.type !== type) return;
+      e.preventDefault(); cell.classList.add('drag-over');
+      const scroller = document.getElementById('alignmentScroll');
+      const rect = scroller.getBoundingClientRect();
+      const edge = 70;
+      if (e.clientY < rect.top + edge) scroller.scrollTop -= 15;
+      else if (rect.bottom - e.clientY < edge) scroller.scrollTop += 15;
+    });
+    cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
+    cell.addEventListener('drop', (e) => {
+      e.preventDefault(); cell.classList.remove('drag-over');
+      if (!drag || drag.type !== type || drag.index === index) { drag = null; return; }
+      const t = data[drag.index][type]; data[drag.index][type] = data[index][type]; data[index][type] = t;
+      drag = null; renderRows(); pushValue();
+    });
+    cell.append(handle, box);
+    return cell;
+  }
+
+  function renderRows() {
+    container.textContent = '';
+    data.forEach((_, index) => {
+      const row = document.createElement('div'); row.className = 'segment-row';
+      const num = document.createElement('div'); num.className = 'segment-num'; num.textContent = '[' + (index + 1) + ']';
+      const grp = document.createElement('div'); grp.className = 'action-btn-group';
+      const sp = document.createElement('button'); sp.className = 'btn-ctrl'; sp.textContent = '✂️ تقسيم'; sp.title = 'تقسيم عند مكان المؤشر';
+      const del = document.createElement('button'); del.className = 'btn-ctrl btn-del'; del.textContent = '🗑️ حذف'; del.title = 'حذف هذه الوحدة';
+      [sp, del].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
+      sp.addEventListener('click', () => splitUnit(index));
+      del.addEventListener('click', () => deleteRow(index));
+      grp.append(sp, del);
+      row.append(num, makeCell('en', index), makeCell('ar', index), grp);
+      container.appendChild(row);
+    });
+  }
+
+  function splitUnit(index) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !sel.anchorNode) { toast('ضع المؤشر داخل النص أولاً'); return; }
+    const el = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
+    const box = el && el.closest('.card-box');
+    if (!box || Number(box.dataset.index) !== index) { toast('ضع المؤشر داخل نص هذه الوحدة ثم اضغط تقسيم'); return; }
+    const type = box.dataset.type;
+    const pre = document.createRange();
+    pre.selectNodeContents(box); pre.setEnd(sel.anchorNode, sel.anchorOffset);
+    const full = data[index][type];
+    const offset = Math.min(pre.toString().length, full.length);
+    const part1 = full.slice(0, offset).trim(), part2 = full.slice(offset).trim();
+    if (!part2) { toast('المؤشر في نهاية النص، لا يوجد ما يُقسَّم'); return; }
+    data[index][type] = part1;
+    const nr = {en: '', ar: ''}; nr[type] = part2;
+    data.splice(index + 1, 0, nr);
+    renderRows(); pushValue();
+  }
+
+  function deleteRow(index) { data.splice(index, 1); renderRows(); pushValue(); }
+  document.getElementById('addBtn').addEventListener('click', () => {
+    data.push({en: '', ar: ''}); renderRows(); pushValue();
+    const scroller = document.getElementById('alignmentScroll');
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+</script></body></html>"""
+
+_COMPONENT_DIR = Path(__file__).parent / "alignment_studio_component"
+
+
+def _declare_alignment_studio():
+    _COMPONENT_DIR.mkdir(exist_ok=True)
+    index = _COMPONENT_DIR / "index.html"
+    if not index.exists() or index.read_text(encoding="utf-8") != ALIGNMENT_STUDIO_HTML:
+        index.write_text(ALIGNMENT_STUDIO_HTML, encoding="utf-8")
+    return components.declare_component("alignment_studio", path=str(_COMPONENT_DIR))
+
+
+alignment_studio = _declare_alignment_studio()
 
 
 # ---------------------------------------------------------
-# TAB 1 : المحاذاة
+# Tab 1: استوديو المحاذاة الشامل الاحترافي (MateCat Studio Full)
 # ---------------------------------------------------------
 with tab1:
-    st.subheader("📄 الخطوة 1: رفع ملفات Word (.docx)")
-    c1, c2 = st.columns(2)
-    with c1:
-        doc_en = st.file_uploader("ملف المصدر (إنجليزي):", type=["docx"], key="doc_en")
-    with c2:
-        doc_ar = st.file_uploader("ملف الهدف (عربي):", type=["docx"], key="doc_ar")
+    st.subheader("📄 الخطوة 1: رفع ملفات Word (.docx) واستخراج النصوص")
+
+    col_doc1, col_doc2 = st.columns(2)
+    with col_doc1:
+        doc_en = st.file_uploader("ارفع ملف Word المصدر (إنجليزي):", type=["docx"], key="doc_en")
+    with col_doc2:
+        doc_ar = st.file_uploader("ارفع ملف Word الهدف (عربي):", type=["docx"], key="doc_ar")
 
     if doc_en and doc_ar:
         text_en, notes_en = extract_text_from_docx_bytes(doc_en.getvalue())
         text_ar, notes_ar = extract_text_from_docx_bytes(doc_ar.getvalue())
 
-        if not (text_en.strip() and text_ar.strip()):
-            st.error("⚠️ تعذّر استخراج نص صالح من أحد الملفين.")
-        else:
-            st.success("✅ تم استخراج النصوص بنجاح.")
-            segs_en = segment_sentences(text_en)
-            segs_ar = segment_sentences(text_ar)
+        if text_en.strip() and text_ar.strip():
+            st.success("✅ تم استخراج النصوص من ملفات Word بنجاح وسرعة فائقة!")
+            all_notes = [f"EN — {n}" for n in notes_en] + [f"AR — {n}" for n in notes_ar]
+            if all_notes:
+                with st.expander("ℹ️ ملاحظات استخراج مستندات Word"):
+                    for n in all_notes:
+                        st.write("•", n)
 
-            with st.expander("🔍 معاينة أول 10 جمل من كل ملف"):
-                st.markdown("**EN:**")
-                for s in segs_en[:10]: st.write("-", s)
-                st.markdown("**AR:**")
-                for s in segs_ar[:10]: st.write("-", s)
+            segs_en = process_docx_text_to_segments(text_en)
+            segs_ar = process_docx_text_to_segments(text_ar)
+
+            max_len = max(len(segs_en), len(segs_ar))
+            segs_en += [""] * (max_len - len(segs_en))
+            segs_ar += [""] * (max_len - len(segs_ar))
 
             st.markdown("---")
-            st.subheader("🧠 الخطوة 2: المحاذاة التلقائية (Length-Based DP)")
-            st.caption("خوارزمية Gale-Church مبسّطة — تسمح بـ 1-1, 1-2, 2-1, 1-0, 0-1.")
-
-            mode = st.radio(
-                "طريقة المحاذاة الأولية:",
-                ["⚡ محاذاة ذكية (DP + نِسب الأطوال)", "🔢 محاذاة بسيطة (فهرسة مباشرة)"],
-                horizontal=True,
-            )
-
-            # نحتفظ بالمحاذاة في session_state لتفادي إعادة الحساب عند كل rerun
-            cache_key = hashlib.md5(
-                (text_en + "\x00" + text_ar + mode).encode("utf-8")
-            ).hexdigest()
-
-            if st.session_state.get("align_cache_key") != cache_key:
-                with st.spinner("⏳ يتم إجراء المحاذاة..."):
-                    prog = st.progress(0.0)
-                    prog.progress(0.4)
-                    if mode.startswith("⚡"):
-                        auto_pairs = align_by_length(segs_en, segs_ar, max_merge=2)
-                    else:
-                        maxn = max(len(segs_en), len(segs_ar))
-                        e = segs_en + [""] * (maxn - len(segs_en))
-                        a = segs_ar + [""] * (maxn - len(segs_ar))
-                        auto_pairs = list(zip(e, a))
-                    prog.progress(1.0); prog.empty()
-                st.session_state["align_cache_key"] = cache_key
-                st.session_state["auto_pairs"] = auto_pairs
-                st.session_state["edited_pairs_df"] = pd.DataFrame(
-                    [{"EN": e, "AR": a} for e, a in auto_pairs]
-                )
-
-            df_edit = st.session_state.get("edited_pairs_df")
-            if df_edit is None or df_edit.empty:
-                df_edit = pd.DataFrame([{"EN": e, "AR": a} for e, a in auto_pairs])
-
-            st.markdown("### ✏️ الخطوة 3: المراجعة اليدوية والتحرير المباشر")
+            st.subheader("🧩 الخطوة 2: استوديو المحاذاة التفاعلي (MateCat Alignment Studio)")
             st.caption(
-                "• استخدم ✏️ للتحرير المباشر داخل الخلايا.\n"
-                "• ➕ أسفل الجدول لإضافة وحدة جديدة، و 🗑️ لحذف صف.\n"
-                "• للدمج/التقسيم: عدّل النص يدوياً ثم أضف/احذف صف."
+                "💡 **الميزات المتاحة:** اسحب من المقبض ⠿ لتبديل المحتوى | ضع المؤشر داخل"
+                " النص ثم اضغط ✂️ لتقسيمه | 🗑️ حذف | ➕ إضافة وحدة. كل تعديل ينتقل"
+                " تلقائياً إلى الاعتماد النهائي."
             )
 
-            edited = st.data_editor(
-                df_edit,
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "EN": st.column_config.TextColumn("🇬🇧 English (LTR)", width="large"),
-                    "AR": st.column_config.TextColumn("🇸🇦 Arabic (RTL)", width="large"),
-                },
-                key="alignment_editor",
-                height=480,
-            )
+            initial_pairs = [{"en": e, "ar": a} for e, a in zip(segs_en, segs_ar)]
+            token = hashlib.md5((text_en + "\x00" + text_ar).encode("utf-8")).hexdigest()
 
-            # ---- زر توليد المخرجات ----
-            col_b1, col_b2 = st.columns([1, 2])
-            with col_b1:
-                if st.button("🚀 اعتماد المحاذاة وتوليد الملفات", use_container_width=True):
-                    final_pairs = [
-                        (normalize_text(str(r["EN"]).strip()), normalize_text(str(r["AR"]).strip()))
-                        for _, r in edited.iterrows()
-                        if str(r["EN"]).strip() and str(r["AR"]).strip()
-                    ]
-                    if not final_pairs:
-                        st.error("⚠️ لا يوجد أزواج صالحة.")
-                    else:
-                        st.session_state["aligned_pairs"] = final_pairs
-                        st.session_state["tmx_bytes"]  = generate_tmx_file(final_pairs)
-                        df_out = pd.DataFrame(final_pairs, columns=["English", "Arabic"])
-                        st.session_state["xlsx_bytes"] = df_to_excel_bytes(df_out)
-                        st.session_state["csv_bytes"]  = df_to_csv_bytes(df_out)
-                        st.success(f"🎉 تم اعتماد {len(final_pairs)} وحدة محاذاة.")
-            with col_b2:
-                st.info("💡 بعد الاعتماد، انتقل إلى تبويب **AI Term Extractor** لاستخراج المصطلحات.")
+            studio_value = alignment_studio(pairs=initial_pairs, token=token, key="alignment_studio", default=None)
+            current_pairs = studio_value if studio_value is not None else initial_pairs
 
-            # ---- أزرار التنزيل ----
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            if st.button("🚀 اعتماد المحاذاة النهائية وتوليد TMX", use_container_width=True):
+                final_pairs = [
+                    (p["en"].strip(), p["ar"].strip()) for p in current_pairs if p["en"].strip() and p["ar"].strip()
+                ]
+                if final_pairs:
+                    st.session_state["aligned_pairs"] = final_pairs
+                    st.session_state["tmx_bytes"] = generate_tmx_file(final_pairs)
+                else:
+                    st.session_state["tmx_bytes"] = None
+                    st.error("⚠️ يرجى التأكد من وجود جمل صالحة للتقابل.")
+
             if st.session_state.get("tmx_bytes"):
-                d1, d2, d3 = st.columns(3)
-                with d1:
-                    st.download_button(
-                        "💾 TMX",
-                        data=st.session_state["tmx_bytes"],
-                        file_name="Aligned_Legal_Memory.tmx",
-                        mime="application/x-tmx+xml",
-                        use_container_width=True,
-                    )
-                with d2:
-                    st.download_button(
-                        "📊 Excel",
-                        data=st.session_state["xlsx_bytes"],
-                        file_name="Aligned_Pairs.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                    )
-                with d3:
-                    st.download_button(
-                        "📄 CSV (UTF-8)",
-                        data=st.session_state["csv_bytes"],
-                        file_name="Aligned_Pairs.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                    )
-
-            # === جدول مقارنة نهائي ===
-            if st.session_state.get("aligned_pairs"):
-                st.markdown("---")
-                st.markdown("### 📋 الجدول النهائي للمحاذاة")
-                preview = pd.DataFrame(st.session_state["aligned_pairs"], columns=["English (LTR)", "Arabic (RTL)"])
-                st.dataframe(preview, use_container_width=True, height=350)
+                st.success(f"🎉 تم اعتماد **{len(st.session_state['aligned_pairs'])}** وحدة محاذاة بنجاح!")
+                st.download_button(
+                    "💾 تنزيل ملف الـ TMX الموحد",
+                    data=st.session_state["tmx_bytes"],
+                    file_name="Aligned_Legal_Memory.tmx",
+                    mime="application/x-tmx+xml",
+                )
+                st.info("👉 **انتقل الآن إلى 'التبويب الثاني (الاستخراج الذكي)'**!")
+        else:
+            st.error("⚠️ تعذر استخراج النصوص من ملفات Word المرفوعة.")
 
 
 # ---------------------------------------------------------
-# TAB 2 : الاستخراج الذكي
+# Tab 2: الاستخراج الذكي وتوليد البطاقات
 # ---------------------------------------------------------
 with tab2:
     st.subheader("🔍 استخراج المصطلحات عبر الذكاء الاصطناعي")
 
-    up_tmx = st.file_uploader("ارفع ملف .TMX (اختياري):", type=["tmx"])
-    aligned_units = (
-        parse_tmx_bytes(up_tmx.read()) if up_tmx is not None
-        else st.session_state.get("aligned_pairs", [])
+    uploaded_tmx = st.file_uploader(
+        "Upload your aligned .TMX memory file (or use alignment from Tab 1)",
+        type=["tmx"],
     )
 
+    if uploaded_tmx is not None:
+        aligned_units = parse_tmx_bytes(uploaded_tmx.read())
+    else:
+        aligned_units = st.session_state["aligned_pairs"]
+
     if aligned_units:
-        st.info(f"تم تحميل **{len(aligned_units)}** وحدة ترجمية.")
+        st.info(f"تم تحميل **{len(aligned_units)}** وحدة ترجمية جاهزة للاستخراج.")
 
-        if st.button("⚡ بدء الاستخراج الذكي"):
+        if st.button("⚡ بدء الاستخراج الذكي والتصفية الصارمة"):
             if not api_key.strip():
-                st.error("⚠️ أدخل مفتاح API أولاً.")
+                st.error("⚠️ يرجى إدخال مفتاح OpenRouter API Key أولاً.")
             else:
-                client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key.strip())
+                client = OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=api_key.strip(),
+                )
 
-                system_prompt = """You are an expert legal terminologist.
-STRICT RULES:
-1. Detect exact sub_domain (e.g., "International Public Law") and document_type.
-2. Extract ONLY substantive legal concepts (obligations, rights, liabilities, bodies).
-3. DO NOT extract preambles, procedural phrases ("Pursuant to", "بعد الاطلاع على"), dates, or article numbers.
-4. Output ONLY valid JSON: {"terms":[{"english_term":"","arabic_term":"","sub_domain":"","document_type":"","pos":"","arabic_description":""}]}
+                system_prompt = """You are an expert legal terminologist specializing in general legal systems, international law, contracts, and legislations.
+
+STRICT FILTERING & AUTOMATIC CONTEXT DETECTION RULES:
+
+1. AUTOMATIC CONTEXT & SUB-DOMAIN DETECTION:
+   - Identify the exact "sub_domain" (e.g., "International Public Law", "Contractual Obligations", "Commercial Law", "Maritime Law").
+   - Identify the "document_type" (e.g., "UN Convention", "Legislative Act", "Commercial Agreement").
+
+2. POSITIVE SCOPE:
+   - Extract ONLY substantive legal concepts, legal obligations, rights, liabilities, statutory bodies, and judicial principles.
+
+3. STRICT NEGATIVE DIRECTIVES (قواعد الاستبعاد الصارمة):
+   - DO NOT extract preamble, procedural, or introductory phrases (e.g., "Having reviewed", "Pursuant to", "In accordance with", "بعد الاطلاع على", "بناء على").
+   - DO NOT extract dates, article numbers, or general administrative filler words (e.g., "Decision", "Date", "Law", "Article").
+
+4. OUTPUT FORMAT:
+   - Output MUST be valid JSON as an object with key "terms", containing an array of objects:
+     {"english_term": "", "arabic_term": "", "sub_domain": "", "document_type": "", "pos": "", "arabic_description": ""}
 """
 
                 results = []
-                prog = st.progress(0.0)
-                status = st.empty()
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
                 for i, (en_text, ar_text) in enumerate(aligned_units):
-                    status.text(f"تحليل {i+1}/{len(aligned_units)} — {selected_model_id}")
+                    status_text.text(
+                        f"جاري تحليل الوحدة ({i+1}/{len(aligned_units)})... عبر نموذج `{selected_model_id}`"
+                    )
                     user_prompt = f"[EN]: {en_text}\n[AR]: {ar_text}"
+
                     try:
-                        time.sleep(0.6)
-                        resp = client.chat.completions.create(
+                        time.sleep(1.0)
+                        response = client.chat.completions.create(
                             model=selected_model_id,
                             messages=[
                                 {"role": "system", "content": system_prompt},
@@ -626,84 +702,98 @@ STRICT RULES:
                             temperature=0.0,
                             response_format={"type": "json_object"},
                         )
-                        raw = json.loads(resp.choices[0].message.content)
+
+                        raw = json.loads(response.choices[0].message.content)
                         terms = raw.get("terms", []) if isinstance(raw, dict) else raw
+
+                        def _s(item, key, default=""):
+                            return str(item.get(key) or default).strip()
+
                         if terms and isinstance(terms, list):
                             for item in terms:
-                                if not isinstance(item, dict) or not item.get("english_term"):
-                                    continue
-                                g = lambda k, d="": str(item.get(k) or d).strip()
-                                results.append({
-                                    "English Term": g("english_term"),
-                                    "Arabic Term": g("arabic_term"),
-                                    "Sub Domain": g("sub_domain", "قانون عام"),
-                                    "Document Type": g("document_type", "نص قانوني"),
-                                    "POS": g("pos", "تركيب اسمي"),
-                                    "Arabic Description": g("arabic_description"),
-                                    "Source EN": en_text,
-                                    "Source AR": ar_text,
-                                })
+                                if isinstance(item, dict) and item.get("english_term"):
+                                    results.append({
+                                        "English Term": _s(item, "english_term"),
+                                        "Arabic Term": _s(item, "arabic_term"),
+                                        "Sub Domain": _s(item, "sub_domain", "قانون عام"),
+                                        "Document Type": _s(item, "document_type", "نص قانوني"),
+                                        "POS": _s(item, "pos", "تركيب اسمي"),
+                                        "Arabic Description": _s(item, "arabic_description"),
+                                        "Source EN": en_text,
+                                        "Source AR": ar_text,
+                                    })
                     except Exception as e:
-                        st.warning(f"⚠️ وحدة {i+1}: {e}")
-                    prog.progress((i + 1) / len(aligned_units))
+                        st.warning(f"تنبيه في الوحدة {i+1}: {e}")
 
-                status.text("✅ اكتمل الاستخراج.")
+                    progress_bar.progress((i + 1) / len(aligned_units))
+
+                status_text.text("✅ اكتمل الاستخراج والتصفية بنجاح!")
+
                 if results:
-                    df = pd.DataFrame(results).drop_duplicates(
-                        subset=["English Term", "Arabic Term"], keep="first"
-                    ).reset_index(drop=True)
+                    df = pd.DataFrame(results)
+                    df.drop_duplicates(subset=["English Term", "Arabic Term"], inplace=True)
                     st.session_state["results_df"] = df
                 else:
-                    st.error("لم يتم العثور على مصطلحات.")
+                    st.error("لم يتم العثور على مصطلحات موضوعية بعد التصفية.")
 
-    # --- عرض النتائج ---
-    df_res = st.session_state.get("results_df")
-    if df_res is not None and not df_res.empty:
-        st.subheader("📊 جدول المصطلحات:")
+    # عرض النتائج والتصدير
+    if st.session_state["results_df"] is not None:
+        df_res = st.session_state["results_df"]
+
+        st.subheader("📊 جدول المصطلحات المستخرجة والمصنفة:")
         st.dataframe(
-            df_res[["English Term", "Arabic Term", "Sub Domain", "Document Type", "Arabic Description"]],
+            df_res[[
+                "English Term",
+                "Arabic Term",
+                "Sub Domain",
+                "Document Type",
+                "Arabic Description",
+            ]],
             use_container_width=True,
         )
 
-        # تصدير
-        xlsx_terms = df_to_excel_bytes(df_res.drop(columns=["POS"], errors="ignore"))
-        csv_terms = df_to_csv_bytes(df_res)
+        excel_buffer = io.BytesIO()
+        excel_df = df_res.drop(columns=["POS"], errors="ignore")
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            excel_df.to_excel(writer, index=False)
+        excel_buffer.seek(0)
+
         try:
-            pdf_bytes = generate_pdf_cards_bytes(df_res)
+            pdf_buffer = generate_pdf_cards_bytes(df_res)
         except Exception as e:
-            pdf_bytes = None
-            st.warning(f"تعذّر توليد PDF: {e}")
+            pdf_buffer = None
+            st.warning(f"تعذر توليد بطاقات PDF: {e}")
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.download_button("📥 Excel", data=xlsx_terms,
-                               file_name="Extracted_Legal_Glossary.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
-        with c2:
-            st.download_button("📄 CSV (UTF-8)", data=csv_terms,
-                               file_name="Extracted_Legal_Glossary.csv",
-                               mime="text/csv", use_container_width=True)
-        with c3:
-            if pdf_bytes:
-                st.download_button("📑 PDF Cards", data=pdf_bytes,
-                                   file_name="Legal_Terminology_Cards.pdf",
-                                   mime="application/pdf", use_container_width=True)
-
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.download_button(
+                label="📥 تنزيل مسرد المصطلحات (Excel)",
+                data=excel_buffer,
+                file_name="Extracted_Legal_Glossary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        with col_d2:
+            if pdf_buffer is not None:
+                st.download_button(
+                    label="📑 تنزيل البطاقات الترجمية (PDF Cards)",
+                    data=pdf_buffer,
+                    file_name="Legal_Terminology_Cards.pdf",
+                    mime="application/pdf",
+                )
 
 # =========================================================
-# 10) Footer
+# 10. التذييل بأسفل الصفحة
 # =========================================================
 st.markdown("<br><br>", unsafe_allow_html=True)
-st.markdown("""
-<div style="text-align:center;background:#131B2E;padding:20px;border-radius:12px;border:1px solid #1E293B;">
-  <h3 style="color:#EAB308;margin-bottom:10px;">📫 تواصل معي</h3>
-  <p style="font-size:15px;color:#E5E7EB;"><b>إعداد وتطوير:</b> يوسف نورالدين</p>
-  <p style="font-size:15px;color:#E5E7EB;">
-    📱 <a href="tel:0928756918" style="color:#EAB308;text-decoration:none;">0928756918</a> |
-    ✉️ <a href="mailto:ywsfalmqmz@gmail.com" style="color:#EAB308;text-decoration:none;">ywsfalmqmz@gmail.com</a>
-  </p>
-  <hr style="margin:15px auto;width:40%;border-top:1px solid #1E293B;">
-  <p style="font-size:12px;color:#9CA3AF;">جميع الحقوق محفوظة © AI Legal Workspace</p>
+st.markdown(
+    """
+<div style="text-align: center; background-color: #131B2E; padding: 20px; border-radius: 12px; border: 1px solid #1E293B;">
+    <h3 style="color: #EAB308; margin-bottom: 10px;">📫 تواصل معي (Contact & Support)</h3>
+    <p style="font-size: 15px; color: #E5E7EB; margin: 5px;"><b>إعداد وتطوير:</b> يوسف نورالدين</p>
+    <p style="font-size: 15px; color: #E5E7EB; margin: 5px;">📱 <b>الهاتف:</b> <a href="tel:0928756918" style="color: #EAB308; text-decoration: none;">0928756918</a> | ✉️ <b>البريد:</b> <a href="mailto:ywsfalmqmz@gmail.com" style="color: #EAB308; text-decoration: none;">ywsfalmqmz@gmail.com</a></p>
+    <hr style="margin: 15px auto; width: 40%; border-top: 1px solid #1E293B;">
+    <p style="font-size: 12px; color: #9CA3AF;">جميع الحقوق محفوظة © المنصة العامة للتحليل والاستخراج القانوني وتوليد البطاقات</p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)

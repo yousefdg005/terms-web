@@ -1,23 +1,29 @@
 import base64
+import hashlib
 import io
 import json
 import os
 import re
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
+from html import escape as html_escape
+from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 import arabic_reshaper
+import pandas as pd
 from bidi.algorithm import get_display
 from docx import Document
 from openai import OpenAI
-import pandas as pd
-import pdfplumber
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
+import streamlit.components.v1 as components
 
 # =========================================================
 # 1. إعدادات صفحة Streamlit
@@ -34,11 +40,11 @@ st.set_page_config(
 # 2. تحميل ملف الـ CSS
 # =========================================================
 def load_css(file_name="style.css"):
-  try:
-    with open(file_name, "r", encoding="utf-8") as f:
-      st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-  except FileNotFoundError:
-    pass
+    try:
+        with open(file_name, "r", encoding="utf-8") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass
 
 
 load_css("style.css")
@@ -48,11 +54,11 @@ load_css("style.css")
 # 3. دالة معالجة النص العربي للـ PDF (ReportLab)
 # =========================================================
 def prepare_arabic_text(text):
-  if not text or not isinstance(text, str):
-    return ""
-  reshaped_text = arabic_reshaper.reshape(text)
-  bidi_text = get_display(reshaped_text)
-  return bidi_text
+    if not text or not isinstance(text, str):
+        return ""
+    reshaped_text = arabic_reshaper.reshape(text)
+    bidi_text = get_display(reshaped_text)
+    return bidi_text
 
 
 # =========================================================
@@ -98,17 +104,11 @@ api_key = st.sidebar.text_input(
 )
 
 PAID_MODELS_MAPPING = {
-    "🌙 Qwen 3.5 Flash (الأقوى في معالجة اللغة العربية)": (
-        "qwen/qwen3.5-flash-02-23"
-    ),
-    "📜 Claude Haiku 5.5 (التزام صارم بتعليمات التصفية)": (
-        "anthropic/claude-haiku-5.5"
-    ),
+    "🌙 Qwen 3.5 Flash (الأقوى في معالجة اللغة العربية)": "qwen/qwen3.5-flash-02-23",
+    "📜 Claude Haiku 5.5 (التزام صارم بتعليمات التصفية)": "anthropic/claude-haiku-5.5",
     "⚡ Gemini 3.8 Flash (معالجة السياقات الطويلة)": "google/gemini-3.8-flash",
     "⚖️ GPT-4o Mini (استخراج هيكلي دقيق)": "openai/gpt-4o-mini",
-    "🦙 Llama 4 Maverick (نموذج مفتوح متقدم)": (
-        "meta-llama/llama-4-maverick"
-    ),
+    "🦙 Llama 4 Maverick (نموذج مفتوح متقدم)": "meta-llama/llama-4-maverick",
 }
 
 st.sidebar.subheader("🤖 اختيار النموذج المراد استعماله")
@@ -124,280 +124,127 @@ selected_model_id = PAID_MODELS_MAPPING[selected_model_label]
 # 6. إدارة حالة الجلسة (Session State)
 # =========================================================
 if "aligned_pairs" not in st.session_state:
-  st.session_state["aligned_pairs"] = []
+    st.session_state["aligned_pairs"] = []
 if "results_df" not in st.session_state:
-  st.session_state["results_df"] = None
+    st.session_state["results_df"] = None
 if "tmx_bytes" not in st.session_state:
-  st.session_state["tmx_bytes"] = None
+    st.session_state["tmx_bytes"] = None
 
 
 # =========================================================
-# 7. دوال تحويل الـ PDF وقراءة الـ TMX
+# 7. دوال استخراج وقراءة ملفات Word و TMX
 # =========================================================
-
-import fitz  # PyMuPDF
-import hashlib
-import unicodedata
-from html import escape as html_escape
-from pathlib import Path
-from xml.sax.saxutils import escape as xml_escape
-
-import pytesseract
-from PIL import Image
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import streamlit.components.v1 as components
-
-MIN_PAGE_CHARS = 25  # أقل من هذا العدد من الحروف يعتبر الصفحة صورية
-OCR_DPI = 300  # 150 كان منخفضاً جداً للعربية (النقاط والتشكيل تضيع)
-
 _INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 _XML_BAD_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def normalize_text(text):
-  """توحيد الأحرف: NFKC يحوّل أشكال العرض العربية (ﻟ ﻻ ...) إلى حروف أصلية."""
-  text = unicodedata.normalize("NFKC", text)
-  text = _INVISIBLE_RE.sub("", text)
-  return text.replace("\u00a0", " ")
+    """توحيد الأحرف: NFKC يحوّل أشكال العرض العربية إلى حروف أصلية."""
+    text = unicodedata.normalize("NFKC", text)
+    text = _INVISIBLE_RE.sub("", text)
+    return text.replace("\u00a0", " ")
 
 
-def _ocr_page(page, document_language="auto"):
-  """OCR متعدد المحاولات للعربية؛ يختار النتيجة وفق الحروف العربية وقلة الرموز العشوائية."""
-  # رفع الدقة يساعد على تمييز النقاط والحروف العربية الصغيرة.
-  pix = page.get_pixmap(dpi=400 if document_language == "ar" else OCR_DPI,
-                        colorspace=fitz.csGRAY)
-  img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
-
-  if document_language != "ar":
-    return pytesseract.image_to_string(img, lang="eng+ara", config="--oem 1 --psm 6")
-
-  # لا نفترض أن PSM 11 هو الأفضل لكل الصفحات. نجرب تخطيطات مختلفة.
-  candidates = []
-  for psm in (4, 6, 11):
+def extract_text_from_docx_bytes(data):
+    """استخراج النصوص والفقرات والجداول من ملف Word (.docx) بشكل نظيف تماماً."""
+    notes = []
     try:
-      candidate = pytesseract.image_to_string(
-          img, lang="ara+eng", config=f"--oem 1 --psm {psm}"
-      )
-      arabic = len(re.findall(r"[\u0600-\u06FF]", candidate))
-      letters = len(re.findall(r"[A-Za-z\u0600-\u06FF]", candidate))
-      junk = len(re.findall(r"[^\w\s.,:؛،؟!()/%+\-]", candidate))
-      # الأولوية لعدد الحروف العربية، مع عقوبة للرموز غير المعتادة.
-      score = arabic * 3 + letters - junk * 2
-      candidates.append((score, candidate, psm, arabic, junk))
-    except Exception:
-      continue
+        doc = Document(io.BytesIO(data))
+        paragraphs = []
 
-  if not candidates:
-    return ""
-  candidates.sort(key=lambda item: item[0], reverse=True)
-  best_score, best_text, best_psm, best_arabic, best_junk = candidates[0]
-  # لا ندمج النتائج الثلاث معًا كي لا تتكرر الفقرات.
-  return best_text
+        # 1. استخراج النصوص من الفقرات
+        for p in doc.paragraphs:
+            txt = p.text.strip()
+            if txt:
+                paragraphs.append(normalize_text(txt))
 
+        # 2. استخراج محتوى الجداول إن وجدت
+        if doc.tables:
+            for table in doc.tables:
+                for row in table.rows:
+                    row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if row_cells:
+                        paragraphs.append(normalize_text(" | ".join(row_cells)))
+            notes.append(f"تم استخراج المحتوى من {len(doc.tables)} جدول/جداول داخل المستند")
 
-@st.cache_data(show_spinner="⏳ جاري استخراج النص من الملف...")
-def extract_text_from_pdf_bytes(data, document_language="auto"):
-    """استخراج هجين لكل صفحة، مع كشف الصفحات التي يبدو أن طبقة النص فيها ناقصة."""
-    pages_text, notes = [], []
-    doc = fitz.open(stream=data, filetype="pdf")
-    plumber = None
-    try:
-        plumber = pdfplumber.open(io.BytesIO(data))
-    except Exception as e:  # noqa: BLE001
-        notes.append(f"pdfplumber: {e}")
-
-    try:
-        for i, page in enumerate(doc):
-            fitz_txt = ""
-            plumber_txt = ""
-            try:
-                fitz_txt = page.get_text("text", sort=True) or ""
-            except Exception as e:  # noqa: BLE001
-                notes.append(f"صفحة {i+1} (PyMuPDF): {e}")
-
-            # جرّب pdfplumber إذا كان استخراج PyMuPDF قصيراً، واحتفظ بالأطول.
-            if plumber is not None:
-                try:
-                    plumber_txt = plumber.pages[i].extract_text() or ""
-                except Exception as e:  # noqa: BLE001
-                    notes.append(f"صفحة {i+1} (pdfplumber): {e}")
-
-            txt = max((fitz_txt, plumber_txt), key=lambda s: len(s.strip()))
-            image_blocks = [
-                b for b in page.get_text("dict").get("blocks", [])
-                if b.get("type") == 1
-            ]
-            has_images = bool(page.get_images(full=True) or image_blocks)
-
-            # OCR ليس مقتصراً على الصفحات التي يقل نصها عن 25 حرفاً:
-            # نفحص الصفحات ذات الصور أيضاً، فقد تحتوي على نص رقمي جزئي ونص مصوّر.
-            should_ocr = len(txt.strip()) < MIN_PAGE_CHARS or has_images
-            if should_ocr:
-                try:
-                    ocr_txt = _ocr_page(page, document_language)
-                    current_len = len(re.sub(r"\s+", "", txt))
-                    ocr_len = len(re.sub(r"\s+", "", ocr_txt))
-
-                    # استبدل النص المستخرج بـ OCR فقط إذا أعطى OCR نصاً أكثر بوضوح،
-                    # لتقليل خطر تكرار النص الموجود أصلاً أو استبدال نص جيد بـ OCR أضعف.
-                    if not txt.strip():
-                        txt = ocr_txt
-                        notes.append(f"صفحة {i+1}: استُخدم OCR لأن النص الرقمي فارغ")
-                    elif ocr_len >= max(MIN_PAGE_CHARS, current_len * 1.25) and ocr_len - current_len >= 40:
-                        txt = ocr_txt
-                        notes.append(
-                            f"صفحة {i+1}: استُخدم OCR لأن النص الرقمي قد يكون ناقصاً "
-                            f"(النص الرقمي {current_len} حرفاً تقريباً، OCR {ocr_len})"
-                        )
-                    elif current_len < MIN_PAGE_CHARS:
-                        txt = ocr_txt
-                        notes.append(f"صفحة {i+1}: قُرئت بالـ OCR؛ العربية تستخدم مقارنة PSM 4 و6 و11 بدقة 400 DPI")
-                    elif has_images:
-                        notes.append(
-                            f"صفحة {i+1}: تحتوي صوراً؛ قورن OCR بالنص الرقمي "
-                            "واحتُفظ بالنص الرقمي لأن OCR لم يكن أطول بوضوح"
-                        )
-                except Exception as e:  # noqa: BLE001
-                    notes.append(f"صفحة {i+1} (OCR): {e}")
-
-            if txt.strip():
-                pages_text.append(normalize_text(txt))
-            else:
-                notes.append(f"صفحة {i+1}: لم يُستخرج منها نص")
-
-    finally:
-        if plumber is not None:
-            plumber.close()
-        doc.close()
-
-    return "\n\n".join(pages_text), notes
+        return "\n\n".join(paragraphs), notes
+    except Exception as e:
+        return "", [f"خطأ أثناء قراءة ملف Word: {e}"]
 
 
-def extract_text_from_pdf(pdf_file):
-  pdf_file.seek(0)
-  return extract_text_from_pdf_bytes(pdf_file.read())
+def process_docx_text_to_segments(text):
+    """تقطيع نص الوورد إلى فقرات وجمل قانونية واضحة ومستقلة للمحاذاة."""
+    if not text:
+        return []
 
+    segments = []
+    for paragraph in text.split("\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
 
-# ---------------------------------------------------------
-# تجزئة النص إلى فقرات/مواد قانونية بدل الأسطر المكسورة
-# ---------------------------------------------------------
-_NEW_UNIT_RE = re.compile(
-    r"^\s*(?:"
-    r"(?:المادة|مادة|الباب|الفصل|الفرع|القسم)\b"
-    r"|(?:article|section|chapter|part|clause)\b"
-    r"|\(?\d{1,3}[\).\-–]\s"
-    r"|\(?[a-zA-Z]\)\s"
-    r"|[أ-ي][\).\-–]\s"
-    r")",
-    re.IGNORECASE,
-)
-_PAGE_NOISE_RE = re.compile(
-    r"^\s*(?:[-–—]?\s*\d{1,4}\s*[-–—]?|page\s+\d+(?:\s+of\s+\d+)?|صفحة\s+\d+(?:\s+من\s+\d+)?)\s*$",
-    re.IGNORECASE,
-)
-_TERMINAL = (".", "؛", ";", ":", "؟", "?", "!", "。")
+        # تقسيم الفقرة إلى جمل بناءً على علامات الترقيم (. ! ؟ ؛ ;)
+        sentence_endings = r"(?<=[.!?؛;])\s+"
+        sentences = re.split(sentence_endings, paragraph)
+        for sent in sentences:
+            sent_clean = re.sub(r"\s+", " ", sent).strip()
+            if sent_clean:
+                segments.append(sent_clean)
 
-
-def process_pdf_text_to_segments(text):
-  """ينظف النص ويدمج الأسطر المكسورة، مع الحفاظ على حدود الفقرات الواضحة."""
-  segments, buf = [], ""
-
-  def flush():
-    nonlocal buf
-    if buf.strip():
-      segments.append(re.sub(r"\\s+", " ", buf).strip())
-    buf = ""
-
-  for raw in text.split("\\n"):
-    line = raw.strip()
-
-    # السطر الفارغ يفصل فقرتين بدلاً من دمجهما.
-    if not line:
-      flush()
-      continue
-
-    if _PAGE_NOISE_RE.match(line):
-      continue
-
-    if buf and (_NEW_UNIT_RE.match(line) or buf.rstrip().endswith(_TERMINAL)):
-      flush()
-
-    # وصل الكلمات الإنجليزية المقطّعة بشرطة نهاية السطر.
-    if buf.endswith("-") and line[:1].islower():
-      buf = buf[:-1] + line
-    else:
-      buf = f"{buf} {line}" if buf else line
-
-  flush()
-  return segments
-
-
-def create_docx_from_text(text):
-  doc = Document()
-  for paragraph in text.split("\n"):
-    if paragraph.strip():
-      doc.add_paragraph(paragraph.strip())
-  buffer = io.BytesIO()
-  doc.save(buffer)
-  buffer.seek(0)
-  return buffer
+    return segments
 
 
 def parse_tmx_bytes(tmx_content):
-  tree = ET.ElementTree(ET.fromstring(tmx_content))
-  root = tree.getroot()
-  pairs = []
-  for tu in root.iter():
-    if tu.tag.endswith("tu"):
-      en_text, ar_text = "", ""
-      for tuv in tu.iter():
-        if tuv.tag.endswith("tuv"):
-          lang = ""
-          for attr_k, attr_v in tuv.attrib.items():
-            if "lang" in attr_k.lower():
-              lang = attr_v.lower()
-              break
-          seg_text = ""
-          for elem in tuv.iter():
-            if elem.tag.endswith("seg"):
-              seg_text = "".join(elem.itertext()).strip()
-              break
-          if lang.startswith("en"):
-            en_text = seg_text
-          elif lang.startswith("ar"):
-            ar_text = seg_text
-      if en_text and ar_text:
-        pairs.append((en_text, ar_text))
-  return pairs
-
+    tree = ET.ElementTree(ET.fromstring(tmx_content))
+    root = tree.getroot()
+    pairs = []
+    for tu in root.iter():
+        if tu.tag.endswith("tu"):
+            en_text, ar_text = "", ""
+            for tuv in tu.iter():
+                if tuv.tag.endswith("tuv"):
+                    lang = ""
+                    for attr_k, attr_v in tuv.attrib.items():
+                        if "lang" in attr_k.lower():
+                            lang = attr_v.lower()
+                            break
+                    seg_text = ""
+                    for elem in tuv.iter():
+                        if elem.tag.endswith("seg"):
+                            seg_text = "".join(elem.itertext()).strip()
+                            break
+                    if lang.startswith("en"):
+                        en_text = seg_text
+                    elif lang.startswith("ar"):
+                        ar_text = seg_text
+            if en_text and ar_text:
+                pairs.append((en_text, ar_text))
+    return pairs
 
 
 def _xml_safe(text):
-  return xml_escape(_XML_BAD_RE.sub("", str(text)))
+    return xml_escape(_XML_BAD_RE.sub("", str(text)))
 
 
 def generate_tmx_file(pairs):
-  # الخطأ القديم: النص كان يُكتب كما هو، فأي & أو < أو > تفسد ملف الـ TMX
-  tmx_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    tmx_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <tmx version="1.4">
   <header creationtool="General Legal Terminology Platform" creationtoolversion="2.0" segtype="sentence" adminlang="en-us" srclang="en" datatype="plaintext"/>
   <body>
 """
-  for en, ar in pairs:
-    tmx_xml += f"""    <tu>
+    for en, ar in pairs:
+        tmx_xml += f"""    <tu>
       <tuv xml:lang="en"><seg>{_xml_safe(en)}</seg></tuv>
       <tuv xml:lang="ar"><seg>{_xml_safe(ar)}</seg></tuv>
     </tu>\n"""
-  tmx_xml += "  </body>\n</tmx>"
-  return tmx_xml.encode("utf-8")
+    tmx_xml += "  </body>\n</tmx>"
+    return tmx_xml.encode("utf-8")
 
 
 # =========================================================
-# 8. دالة توليد بطاقات الـ PDF الفاخرة (بديل الـ Word)
+# 8. دالة توليد بطاقات الـ PDF الفاخرة
 # =========================================================
 _FONT_CANDIDATES = [
-    # (regular, bold)
     ("fonts/Amiri-Regular.ttf", "fonts/Amiri-Bold.ttf"),
     ("fonts/NotoNaskhArabic-Regular.ttf", "fonts/NotoNaskhArabic-Bold.ttf"),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
@@ -411,141 +258,145 @@ _PDF_FONTS = None
 
 
 def get_pdf_fonts():
-  """يسجل خطاً يدعم العربية. Helvetica لا يحتوي حروفاً عربية فتظهر مربعات."""
-  global _PDF_FONTS
-  if _PDF_FONTS:
-    return _PDF_FONTS
-  for reg, bold in _FONT_CANDIDATES:
-    if os.path.exists(reg):
-      try:
-        pdfmetrics.registerFont(TTFont("AppFont", reg))
-        pdfmetrics.registerFont(
-            TTFont("AppFont-Bold", bold if os.path.exists(bold) else reg)
-        )
-        _PDF_FONTS = ("AppFont", "AppFont-Bold")
+    global _PDF_FONTS
+    if _PDF_FONTS:
         return _PDF_FONTS
-      except Exception:  # noqa: BLE001
-        continue
-  _PDF_FONTS = ("Helvetica", "Helvetica-Bold")
-  return _PDF_FONTS
+    for reg, bold in _FONT_CANDIDATES:
+        if os.path.exists(reg):
+            try:
+                pdfmetrics.registerFont(TTFont("AppFont", reg))
+                pdfmetrics.registerFont(TTFont("AppFont-Bold", bold if os.path.exists(bold) else reg))
+                _PDF_FONTS = ("AppFont", "AppFont-Bold")
+                return _PDF_FONTS
+            except Exception:
+                continue
+    _PDF_FONTS = ("Helvetica", "Helvetica-Bold")
+    return _PDF_FONTS
 
 
 def _wrap_logical(text, font, size, max_width):
-  """يلف النص المنطقي (قبل bidi) سطراً سطراً ثم يعيد ترتيب كل سطر على حدة.
-
-  ReportLab يلف الفقرة بعد تطبيق get_display فتنعكس أسطر العربية المتعددة،
-  لذلك نقيس العرض ونكسر الأسطر بأنفسنا.
-  """
-  lines, cur = [], ""
-  for word in str(text).split():
-    cand = f"{cur} {word}".strip()
-    if cur and pdfmetrics.stringWidth(prepare_arabic_text(cand), font, size) > max_width:
-      lines.append(cur)
-      cur = word
-    else:
-      cur = cand
-  if cur:
-    lines.append(cur)
-  return lines or [""]
+    lines, cur = [], ""
+    for word in str(text).split():
+        cand = f"{cur} {word}".strip()
+        if cur and pdfmetrics.stringWidth(prepare_arabic_text(cand), font, size) > max_width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = cand
+    if cur:
+        lines.append(cur)
+    return lines or [""]
 
 
 def ar_par(text, style, max_width):
-  lines = _wrap_logical(text, style.fontName, style.fontSize, max_width)
-  html = "<br/>".join(html_escape(prepare_arabic_text(l)) for l in lines)
-  return Paragraph(html, style)
+    lines = _wrap_logical(text, style.fontName, style.fontSize, max_width)
+    html = "<br/>".join(html_escape(prepare_arabic_text(l)) for l in lines)
+    return Paragraph(html, style)
 
 
 def en_par(text, style):
-  return Paragraph(html_escape(str(text)), style)
+    return Paragraph(html_escape(str(text)), style)
 
 
 def generate_pdf_cards_bytes(df):
-  font, font_bold = get_pdf_fonts()
-  buffer = io.BytesIO()
-  doc = SimpleDocTemplate(
-      buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
-  )
-  story = []
-  styles = getSampleStyleSheet()
+    font, font_bold = get_pdf_fonts()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
 
-  title_style = ParagraphStyle(
-      "TitleStyle", parent=styles["Heading1"], fontName=font_bold, fontSize=18,
-      alignment=1, textColor=colors.HexColor("#0F172A"), leading=26,
-  )
-  sub_style = ParagraphStyle(
-      "SubStyle", parent=styles["Normal"], fontName=font, fontSize=10,
-      alignment=1, textColor=colors.HexColor("#64748B"), leading=14,
-  )
-  cell_title_style = ParagraphStyle(
-      "CellTitle", fontName=font_bold, fontSize=10, alignment=2, leading=15,
-      textColor=colors.HexColor("#1E293B"),
-  )
-  cell_val_style = ParagraphStyle(
-      "CellVal", fontName=font, fontSize=10, alignment=2, leading=15,
-      textColor=colors.HexColor("#0F172A"),
-  )
-  cell_val_en_style = ParagraphStyle("CellValEn", parent=cell_val_style, alignment=0)
+    title_style = ParagraphStyle(
+        "TitleStyle",
+        parent=styles["Heading1"],
+        fontName=font_bold,
+        fontSize=18,
+        alignment=1,
+        textColor=colors.HexColor("#0F172A"),
+        leading=26,
+    )
+    sub_style = ParagraphStyle(
+        "SubStyle",
+        parent=styles["Normal"],
+        fontName=font,
+        fontSize=10,
+        alignment=1,
+        textColor=colors.HexColor("#64748B"),
+        leading=14,
+    )
+    cell_title_style = ParagraphStyle(
+        "CellTitle",
+        fontName=font_bold,
+        fontSize=10,
+        alignment=2,
+        leading=15,
+        textColor=colors.HexColor("#1E293B"),
+    )
+    cell_val_style = ParagraphStyle(
+        "CellVal",
+        fontName=font,
+        fontSize=10,
+        alignment=2,
+        leading=15,
+        textColor=colors.HexColor("#0F172A"),
+    )
+    cell_val_en_style = ParagraphStyle("CellValEn", parent=cell_val_style, alignment=0)
 
-  VAL_W, LBL_W, PAD = 360, 160, 6
-  val_text_w = VAL_W - 2 * PAD - 4
-  lbl_text_w = LBL_W - 2 * PAD - 4
+    VAL_W, LBL_W, PAD = 360, 160, 6
+    val_text_w = VAL_W - 2 * PAD - 4
+    lbl_text_w = LBL_W - 2 * PAD - 4
 
-  story.append(ar_par("بطاقات المصطلحات القانونية الموثقة (Legal Terminology Cards)", title_style, 520))
-  story.append(ar_par("منصة التحليل والاستخراج القانوني الذكي | إعداد: يوسف نورالدين", sub_style, 520))
-  story.append(Spacer(1, 15))
-
-  total = len(df)
-  # الخطأ القديم: استعمال idx بعد drop_duplicates يعطي أرقاماً متقطعة تتجاوز العدد الكلي
-  for n, (_, row) in enumerate(df.iterrows(), start=1):
-    story.append(ar_par(f"بطاقة مصطلح رقم: ({n:02d} / {total:02d})", cell_title_style, 520))
-    story.append(Spacer(1, 5))
-
-    def lbl(t):
-      return ar_par(t, cell_title_style, lbl_text_w)
-
-    def ar_val(key, default=""):
-      return ar_par(str(row.get(key, default) or default), cell_val_style, val_text_w)
-
-    data = [
-        [en_par(row.get("English Term", ""), cell_val_en_style), lbl("المصطلح بالإنجليزي (English Term)")],
-        [ar_val("Arabic Term"), lbl("المقابل بالعربي (Arabic Term)")],
-        [ar_val("Sub Domain", "قانون عام"), lbl("المجال الفرعي (Sub-Domain)")],
-        [ar_val("Document Type", "نص قانوني عام"), lbl("نوع المستند (Document Type)")],
-        [en_par(row.get("Source EN", ""), cell_val_en_style), lbl("السياق الإنجليزي (Context EN)")],
-        [ar_val("Source AR"), lbl("السياق العربي (Context AR)")],
-        [ar_val("Arabic Description"), lbl("الشرح والتعريف (Legal Description)")],
-    ]
-
-    t = Table(data, colWidths=[VAL_W, LBL_W])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), PAD),
-    ]))
-    story.append(t)
+    story.append(ar_par("بطاقات المصطلحات القانونية الموثقة (Legal Terminology Cards)", title_style, 520))
+    story.append(ar_par("منصة التحليل والاستخراج القانوني الذكي | إعداد: يوسف نورالدين", sub_style, 520))
     story.append(Spacer(1, 15))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0"), spaceAfter=15))
 
-  doc.build(story)
-  buffer.seek(0)
-  return buffer
+    total = len(df)
+    for n, (_, row) in enumerate(df.iterrows(), start=1):
+        story.append(ar_par(f"بطاقة مصطلح رقم: ({n:02d} / {total:02d})", cell_title_style, 520))
+        story.append(Spacer(1, 5))
+
+        def lbl(t):
+            return ar_par(t, cell_title_style, lbl_text_w)
+
+        def ar_val(key, default=""):
+            return ar_par(str(row.get(key, default) or default), cell_val_style, val_text_w)
+
+        data = [
+            [en_par(row.get("English Term", ""), cell_val_en_style), lbl("المصطلح بالإنجليزي (English Term)")],
+            [ar_val("Arabic Term"), lbl("المقابل بالعربي (Arabic Term)")],
+            [ar_val("Sub Domain", "قانون عام"), lbl("المجال الفرعي (Sub-Domain)")],
+            [ar_val("Document Type", "نص قانوني عام"), lbl("نوع المستند (Document Type)")],
+            [en_par(row.get("Source EN", ""), cell_val_en_style), lbl("السياق الإنجليزي (Context EN)")],
+            [ar_val("Source AR"), lbl("السياق العربي (Context AR)")],
+            [ar_val("Arabic Description"), lbl("الشرح والتعريف (Legal Description)")],
+        ]
+
+        t = Table(data, colWidths=[VAL_W, LBL_W])
+        t.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("PADDING", (0, 0), (-1, -1), PAD),
+            ])
+        )
+        story.append(t)
+        story.append(Spacer(1, 15))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0"), spaceAfter=15))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 
 # =========================================================
 # 9. علامات التبويب الرئيسية (Tabs)
 # =========================================================
-tab1, tab2 = st.tabs(
-    ["Alignment Studio (beta)", "AI Term Extractor"]
-)
+tab1, tab2 = st.tabs(["Alignment Studio (beta)", "AI Term Extractor"])
 
 
 # =========================================================
-# مكوّن استوديو المحاذاة (ثنائي الاتجاه: يعيد التعديلات إلى بايثون)
+# مكوّن استوديو المحاذاة (ثنائي الاتجاه)
 # =========================================================
-# الخطأ الجوهري القديم: components.html اتجاه واحد فقط، فكل ما تفعله في
-# الاستوديو (تعديل/سحب/تقسيم/حذف) يبقى داخل المتصفح، وزر "اعتماد" كان يقرأ
-# lines_en/lines_ar الأصلية. هنا نستعمل declare_component ليعود الناتج لبايثون.
 ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
 <html lang="ar"><head><meta charset="utf-8">
 <style>
@@ -554,7 +405,6 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
   body { font-family: 'Cairo','Segoe UI',Tahoma,Arial,sans-serif; background:#0B0F19; color:#E5E7EB; margin:0; padding:10px; overflow:hidden; }
   #bar { display:flex; gap:10px; align-items:center; margin-bottom:12px; direction:rtl; }
   #toast { color:#FDE047; font-size:13px; }
-  /* منطقة تمرير مستقلة لوحدات المحاذاة */
   #alignmentScroll {
     height: 610px;
     max-height: calc(100vh - 135px);
@@ -599,14 +449,13 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
   const toastEl = document.getElementById('toast');
   let data = [], token = null, drag = null, sendTimer = null;
 
-  // ---------- بروتوكول Streamlit ----------
   function post(type, extra) { window.parent.postMessage(Object.assign({isStreamlitMessage:true, type}, extra||{}), '*'); }
   function pushValue() { post('streamlit:setComponentValue', {value: data.map(d => ({en:d.en, ar:d.ar})), dataType:'json'}); }
   function pushSoon() { clearTimeout(sendTimer); sendTimer = setTimeout(pushValue, 500); }
   window.addEventListener('message', (ev) => {
     if (!ev.data || ev.data.type !== 'streamlit:render') return;
     const args = ev.data.args || {};
-    if (args.token !== token) {            // لا نعيد التهيئة عند كل rerun حتى لا تضيع التعديلات
+    if (args.token !== token) {
       token = args.token;
       data = (args.pairs || []).map(p => ({en: p.en || '', ar: p.ar || ''}));
       renderRows();
@@ -617,8 +466,6 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
 
   function toast(msg) { toastEl.textContent = msg; setTimeout(() => { if (toastEl.textContent === msg) toastEl.textContent = ''; }, 2500); }
 
-  // ---------- العرض: textContent (وليس innerHTML) ----------
-  // الخطأ القديم: النص كان يُحقن في innerHTML، فأي <كلمة> أو & أو < يُفسَّر كوسم HTML وتختفي الكلمات.
   function makeCell(type, index) {
     const cell = document.createElement('div');
     cell.className = 'cell'; cell.dataset.index = index; cell.dataset.type = type;
@@ -631,7 +478,7 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     if (box.contentEditable !== 'plaintext-only') box.contentEditable = 'true';
     box.textContent = data[index][type];
     box.addEventListener('input', () => { data[index][type] = box.innerText.replace(/\n$/, ''); pushSoon(); });
-    box.addEventListener('paste', (e) => {   // لصق نص خام فقط
+    box.addEventListener('paste', (e) => {
       if (box.contentEditable === 'plaintext-only') return;
       e.preventDefault();
       document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
@@ -640,7 +487,6 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     cell.addEventListener('dragover', (e) => {
       if (!drag || drag.type !== type) return;
       e.preventDefault(); cell.classList.add('drag-over');
-      // التمرير التلقائي داخل منطقة وحدات المحاذاة، لا داخل الصفحة كلها
       const scroller = document.getElementById('alignmentScroll');
       const rect = scroller.getBoundingClientRect();
       const edge = 70;
@@ -666,7 +512,7 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
       const grp = document.createElement('div'); grp.className = 'action-btn-group';
       const sp = document.createElement('button'); sp.className = 'btn-ctrl'; sp.textContent = '✂️ تقسيم'; sp.title = 'تقسيم عند مكان المؤشر';
       const del = document.createElement('button'); del.className = 'btn-ctrl btn-del'; del.textContent = '🗑️ حذف'; del.title = 'حذف هذه الوحدة';
-      [sp, del].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));  // لا تفقد التحديد عند الضغط
+      [sp, del].forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
       sp.addEventListener('click', () => splitUnit(index));
       del.addEventListener('click', () => deleteRow(index));
       grp.append(sp, del);
@@ -675,9 +521,6 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
     });
   }
 
-  // ---------- التقسيم عند المؤشر ----------
-  // الخطأ القديم: focusOffset هو موضع داخل العقدة الحالية وليس داخل الصندوق كله،
-  // وكان يستعمل index الزر وليس الصندوق الذي فيه المؤشر.
   function splitUnit(index) {
     const sel = window.getSelection();
     if (!sel.rangeCount || !sel.anchorNode) { toast('ضع المؤشر داخل النص أولاً'); return; }
@@ -700,7 +543,6 @@ ALIGNMENT_STUDIO_HTML = r"""<!DOCTYPE html>
   function deleteRow(index) { data.splice(index, 1); renderRows(); pushValue(); }
   document.getElementById('addBtn').addEventListener('click', () => {
     data.push({en: '', ar: ''}); renderRows(); pushValue();
-    // انتقل إلى الوحدة الجديدة داخل مربع التمرير الخاص بالمحاذاة
     const scroller = document.getElementById('alignmentScroll');
     scroller.scrollTop = scroller.scrollHeight;
   });
@@ -710,11 +552,11 @@ _COMPONENT_DIR = Path(__file__).parent / "alignment_studio_component"
 
 
 def _declare_alignment_studio():
-  _COMPONENT_DIR.mkdir(exist_ok=True)
-  index = _COMPONENT_DIR / "index.html"
-  if not index.exists() or index.read_text(encoding="utf-8") != ALIGNMENT_STUDIO_HTML:
-    index.write_text(ALIGNMENT_STUDIO_HTML, encoding="utf-8")
-  return components.declare_component("alignment_studio", path=str(_COMPONENT_DIR))
+    _COMPONENT_DIR.mkdir(exist_ok=True)
+    index = _COMPONENT_DIR / "index.html"
+    if not index.exists() or index.read_text(encoding="utf-8") != ALIGNMENT_STUDIO_HTML:
+        index.write_text(ALIGNMENT_STUDIO_HTML, encoding="utf-8")
+    return components.declare_component("alignment_studio", path=str(_COMPONENT_DIR))
 
 
 alignment_studio = _declare_alignment_studio()
@@ -724,112 +566,102 @@ alignment_studio = _declare_alignment_studio()
 # Tab 1: استوديو المحاذاة الشامل الاحترافي (MateCat Studio Full)
 # ---------------------------------------------------------
 with tab1:
-  st.subheader("📄 الخطوة 1: رفع ملفات PDF واستخراج النصوص")
+    st.subheader("📄 الخطوة 1: رفع ملفات Word (.docx) واستخراج النصوص")
 
-  col_pdf1, col_pdf2 = st.columns(2)
-  with col_pdf1:
-    pdf_en = st.file_uploader(
-        "ارفع ملف PDF المصدر (إنجليزي):", type=["pdf"], key="pdf_en"
-    )
-  with col_pdf2:
-    pdf_ar = st.file_uploader(
-        "ارفع ملف PDF الهدف (عربي):", type=["pdf"], key="pdf_ar"
-    )
+    col_doc1, col_doc2 = st.columns(2)
+    with col_doc1:
+        doc_en = st.file_uploader("ارفع ملف Word المصدر (إنجليزي):", type=["docx"], key="doc_en")
+    with col_doc2:
+        doc_ar = st.file_uploader("ارفع ملف Word الهدف (عربي):", type=["docx"], key="doc_ar")
 
-  if pdf_en and pdf_ar:
-    text_en, notes_en = extract_text_from_pdf_bytes(pdf_en.getvalue(), document_language="en")
-    text_ar, notes_ar = extract_text_from_pdf_bytes(pdf_ar.getvalue(), document_language="ar")
+    if doc_en and doc_ar:
+        text_en, notes_en = extract_text_from_docx_bytes(doc_en.getvalue())
+        text_ar, notes_ar = extract_text_from_docx_bytes(doc_ar.getvalue())
 
-    if text_en.strip() and text_ar.strip():
-      st.success("✅ تم استخراج النصوص بنجاح!")
-      all_notes = [f"EN — {n}" for n in notes_en] + [f"AR — {n}" for n in notes_ar]
-      if all_notes:
-        with st.expander("ℹ️ ملاحظات الاستخراج (صفحات قُرئت بالـ OCR أو حدثت فيها أخطاء)"):
-          for n in all_notes:
-            st.write("•", n)
+        if text_en.strip() and text_ar.strip():
+            st.success("✅ تم استخراج النصوص من ملفات Word بنجاح وسرعة فائقة!")
+            all_notes = [f"EN — {n}" for n in notes_en] + [f"AR — {n}" for n in notes_ar]
+            if all_notes:
+                with st.expander("ℹ️ ملاحظات استخراج مستندات Word"):
+                    for n in all_notes:
+                        st.write("•", n)
 
-      segs_en = process_pdf_text_to_segments(text_en)
-      segs_ar = process_pdf_text_to_segments(text_ar)
+            segs_en = process_docx_text_to_segments(text_en)
+            segs_ar = process_docx_text_to_segments(text_ar)
 
-      max_len = max(len(segs_en), len(segs_ar))
-      segs_en += [""] * (max_len - len(segs_en))
-      segs_ar += [""] * (max_len - len(segs_ar))
+            max_len = max(len(segs_en), len(segs_ar))
+            segs_en += [""] * (max_len - len(segs_en))
+            segs_ar += [""] * (max_len - len(segs_ar))
 
-      st.markdown("---")
-      st.subheader("🧩 الخطوة 2: استوديو المحاذاة التفاعلي (MateCat Alignment Studio)")
-      st.caption(
-          "💡 **الميزات المتاحة:** اسحب من المقبض ⠿ لتبديل المحتوى | ضع المؤشر داخل"
-          " النص ثم اضغط ✂️ لتقسيمه | 🗑️ حذف | ➕ إضافة وحدة. كل تعديل ينتقل"
-          " تلقائياً إلى الاعتماد النهائي."
-      )
+            st.markdown("---")
+            st.subheader("🧩 الخطوة 2: استوديو المحاذاة التفاعلي (MateCat Alignment Studio)")
+            st.caption(
+                "💡 **الميزات المتاحة:** اسحب من المقبض ⠿ لتبديل المحتوى | ضع المؤشر داخل"
+                " النص ثم اضغط ✂️ لتقسيمه | 🗑️ حذف | ➕ إضافة وحدة. كل تعديل ينتقل"
+                " تلقائياً إلى الاعتماد النهائي."
+            )
 
-      initial_pairs = [{"en": e, "ar": a} for e, a in zip(segs_en, segs_ar)]
-      token = hashlib.md5((text_en + "\x00" + text_ar).encode("utf-8")).hexdigest()
+            initial_pairs = [{"en": e, "ar": a} for e, a in zip(segs_en, segs_ar)]
+            token = hashlib.md5((text_en + "\x00" + text_ar).encode("utf-8")).hexdigest()
 
-      studio_value = alignment_studio(
-          pairs=initial_pairs, token=token, key="alignment_studio", default=None
-      )
-      current_pairs = studio_value if studio_value is not None else initial_pairs
+            studio_value = alignment_studio(pairs=initial_pairs, token=token, key="alignment_studio", default=None)
+            current_pairs = studio_value if studio_value is not None else initial_pairs
 
-      st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
-      if st.button("🚀 اعتماد المحاذاة النهائية وتوليد TMX", use_container_width=True):
-        # الخطأ القديم: كانت تُقرأ lines_en/lines_ar الأصلية، فتضيع كل تعديلات الاستوديو
-        final_pairs = [
-            (p["en"].strip(), p["ar"].strip())
-            for p in current_pairs
-            if p["en"].strip() and p["ar"].strip()
-        ]
-        if final_pairs:
-          st.session_state["aligned_pairs"] = final_pairs
-          st.session_state["tmx_bytes"] = generate_tmx_file(final_pairs)
+            if st.button("🚀 اعتماد المحاذاة النهائية وتوليد TMX", use_container_width=True):
+                final_pairs = [
+                    (p["en"].strip(), p["ar"].strip()) for p in current_pairs if p["en"].strip() and p["ar"].strip()
+                ]
+                if final_pairs:
+                    st.session_state["aligned_pairs"] = final_pairs
+                    st.session_state["tmx_bytes"] = generate_tmx_file(final_pairs)
+                else:
+                    st.session_state["tmx_bytes"] = None
+                    st.error("⚠️ يرجى التأكد من وجود جمل صالحة للتقابل.")
+
+            if st.session_state.get("tmx_bytes"):
+                st.success(f"🎉 تم اعتماد **{len(st.session_state['aligned_pairs'])}** وحدة محاذاة بنجاح!")
+                st.download_button(
+                    "💾 تنزيل ملف الـ TMX الموحد",
+                    data=st.session_state["tmx_bytes"],
+                    file_name="Aligned_Legal_Memory.tmx",
+                    mime="application/x-tmx+xml",
+                )
+                st.info("👉 **انتقل الآن إلى 'التبويب الثاني (الاستخراج الذكي)'**!")
         else:
-          st.session_state["tmx_bytes"] = None
-          st.error("⚠️ يرجى التأكد من وجود جمل صالحة للتقابل.")
-
-      # يُعرض خارج شرط الزر حتى لا يختفي عند الضغط على زر التنزيل (rerun)
-      if st.session_state.get("tmx_bytes"):
-        st.success(f"🎉 تم اعتماد **{len(st.session_state['aligned_pairs'])}** وحدة محاذاة بنجاح!")
-        st.download_button(
-            "💾 تنزيل ملف الـ TMX الموحد",
-            data=st.session_state["tmx_bytes"],
-            file_name="Aligned_Legal_Memory.tmx",
-            mime="application/x-tmx+xml",
-        )
-        st.info("👉 **انتقل الآن إلى 'التبويب الثاني (الاستخراج الذكي)'**!")
-    else:
-      st.error("⚠️ تعذر استخراج النصوص من ملفات الـ PDF.")
+            st.error("⚠️ تعذر استخراج النصوص من ملفات Word المرفوعة.")
 
 
 # ---------------------------------------------------------
 # Tab 2: الاستخراج الذكي وتوليد البطاقات
 # ---------------------------------------------------------
 with tab2:
-  st.subheader("🔍 استخراج المصطلحات عبر الذكاء الاصطناعي")
+    st.subheader("🔍 استخراج المصطلحات عبر الذكاء الاصطناعي")
 
-  uploaded_tmx = st.file_uploader(
-      "Upload your aligned .TMX memory file (or use alignment from Tab 1)",
-      type=["tmx"],
-  )
+    uploaded_tmx = st.file_uploader(
+        "Upload your aligned .TMX memory file (or use alignment from Tab 1)",
+        type=["tmx"],
+    )
 
-  if uploaded_tmx is not None:
-    aligned_units = parse_tmx_bytes(uploaded_tmx.read())
-  else:
-    aligned_units = st.session_state["aligned_pairs"]
+    if uploaded_tmx is not None:
+        aligned_units = parse_tmx_bytes(uploaded_tmx.read())
+    else:
+        aligned_units = st.session_state["aligned_pairs"]
 
-  if aligned_units:
-    st.info(f"تم تحميل **{len(aligned_units)}** وحدة ترجمية جاهزة للاستخراج.")
+    if aligned_units:
+        st.info(f"تم تحميل **{len(aligned_units)}** وحدة ترجمية جاهزة للاستخراج.")
 
-    if st.button("⚡ بدء الاستخراج الذكي والتصفية الصارمة"):
-      if not api_key.strip():
-        st.error("⚠️ يرجى إدخال مفتاح OpenRouter API Key أولاً.")
-      else:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key.strip(),
-        )
+        if st.button("⚡ بدء الاستخراج الذكي والتصفية الصارمة"):
+            if not api_key.strip():
+                st.error("⚠️ يرجى إدخال مفتاح OpenRouter API Key أولاً.")
+            else:
+                client = OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=api_key.strip(),
+                )
 
-        system_prompt = """You are an expert legal terminologist specializing in general legal systems, international law, contracts, and legislations.
+                system_prompt = """You are an expert legal terminologist specializing in general legal systems, international law, contracts, and legislations.
 
 STRICT FILTERING & AUTOMATIC CONTEXT DETECTION RULES:
 
@@ -849,113 +681,105 @@ STRICT FILTERING & AUTOMATIC CONTEXT DETECTION RULES:
      {"english_term": "", "arabic_term": "", "sub_domain": "", "document_type": "", "pos": "", "arabic_description": ""}
 """
 
-        results = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
-        for i, (en_text, ar_text) in enumerate(aligned_units):
-          status_text.text(
-              f"جاري تحليل الوحدة ({i+1}/{len(aligned_units)})... عبر نموذج"
-              f" `{selected_model_id}`"
-          )
-          user_prompt = f"[EN]: {en_text}\n[AR]: {ar_text}"
+                for i, (en_text, ar_text) in enumerate(aligned_units):
+                    status_text.text(
+                        f"جاري تحليل الوحدة ({i+1}/{len(aligned_units)})... عبر نموذج `{selected_model_id}`"
+                    )
+                    user_prompt = f"[EN]: {en_text}\n[AR]: {ar_text}"
 
-          try:
-            time.sleep(1.0)
-            response = client.chat.completions.create(
-                model=selected_model_id,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.0,
-                response_format={"type": "json_object"},
-            )
+                    try:
+                        time.sleep(1.0)
+                        response = client.chat.completions.create(
+                            model=selected_model_id,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            temperature=0.0,
+                            response_format={"type": "json_object"},
+                        )
 
-            raw = json.loads(response.choices[0].message.content)
-            terms = raw.get("terms", []) if isinstance(raw, dict) else raw
+                        raw = json.loads(response.choices[0].message.content)
+                        terms = raw.get("terms", []) if isinstance(raw, dict) else raw
 
-            def _s(item, key, default=""):
-              # النموذج قد يعيد null فيفشل .strip() — نحوّل القيمة الفارغة للافتراضية
-              return str(item.get(key) or default).strip()
+                        def _s(item, key, default=""):
+                            return str(item.get(key) or default).strip()
 
-            if terms and isinstance(terms, list):
-              for item in terms:
-                if isinstance(item, dict) and item.get("english_term"):
-                  results.append({
-                      "English Term": _s(item, "english_term"),
-                      "Arabic Term": _s(item, "arabic_term"),
-                      "Sub Domain": _s(item, "sub_domain", "قانون عام"),
-                      "Document Type": _s(item, "document_type", "نص قانوني"),
-                      "POS": _s(item, "pos", "تركيب اسمي"),
-                      "Arabic Description": _s(item, "arabic_description"),
-                      "Source EN": en_text,
-                      "Source AR": ar_text,
-                  })
-          except Exception as e:
-            st.warning(f"تنبيه في الوحدة {i+1}: {e}")
+                        if terms and isinstance(terms, list):
+                            for item in terms:
+                                if isinstance(item, dict) and item.get("english_term"):
+                                    results.append({
+                                        "English Term": _s(item, "english_term"),
+                                        "Arabic Term": _s(item, "arabic_term"),
+                                        "Sub Domain": _s(item, "sub_domain", "قانون عام"),
+                                        "Document Type": _s(item, "document_type", "نص قانوني"),
+                                        "POS": _s(item, "pos", "تركيب اسمي"),
+                                        "Arabic Description": _s(item, "arabic_description"),
+                                        "Source EN": en_text,
+                                        "Source AR": ar_text,
+                                    })
+                    except Exception as e:
+                        st.warning(f"تنبيه في الوحدة {i+1}: {e}")
 
-          progress_bar.progress((i + 1) / len(aligned_units))
+                    progress_bar.progress((i + 1) / len(aligned_units))
 
-        status_text.text("✅ اكتمل الاستخراج والتصفية بنجاح!")
+                status_text.text("✅ اكتمل الاستخراج والتصفية بنجاح!")
 
-        if results:
-          df = pd.DataFrame(results)
-          df.drop_duplicates(
-              subset=["English Term", "Arabic Term"], inplace=True
-          )
-          st.session_state["results_df"] = df
-        else:
-          st.error("لم يتم العثور على مصطلحات موضوعية بعد التصفية.")
+                if results:
+                    df = pd.DataFrame(results)
+                    df.drop_duplicates(subset=["English Term", "Arabic Term"], inplace=True)
+                    st.session_state["results_df"] = df
+                else:
+                    st.error("لم يتم العثور على مصطلحات موضوعية بعد التصفية.")
 
-  # عرض النتائج والتصدير
-  if st.session_state["results_df"] is not None:
-    df_res = st.session_state["results_df"]
+    # عرض النتائج والتصدير
+    if st.session_state["results_df"] is not None:
+        df_res = st.session_state["results_df"]
 
-    st.subheader("📊 جدول المصطلحات المستخرجة والمصنفة:")
-    st.dataframe(
-        df_res[[
-            "English Term",
-            "Arabic Term",
-            "Sub Domain",
-            "Document Type",
-            "Arabic Description",
-        ]],
-        use_container_width=True,
-    )
-
-    # تجهيز التنزيل لـ Excel (خالٍ من POS)
-    excel_buffer = io.BytesIO()
-    excel_df = df_res.drop(columns=["POS"], errors="ignore")
-    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-      excel_df.to_excel(writer, index=False)
-    excel_buffer.seek(0)
-
-    # تجهيز التنزيل لـ PDF (بديل الوورد)
-    try:
-      pdf_buffer = generate_pdf_cards_bytes(df_res)
-    except Exception as e:  # noqa: BLE001
-      pdf_buffer = None
-      st.warning(f"تعذر توليد بطاقات PDF: {e}")
-
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-      st.download_button(
-          label="📥 تنزيل مسرد المصطلحات (Excel)",
-          data=excel_buffer,
-          file_name="Extracted_Legal_Glossary.xlsx",
-          mime=(
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          ),
-      )
-    with col_d2:
-      if pdf_buffer is not None:
-        st.download_button(
-            label="📑 تنزيل البطاقات الترجمية (PDF Cards)",
-            data=pdf_buffer,
-            file_name="Legal_Terminology_Cards.pdf",
-            mime="application/pdf",
+        st.subheader("📊 جدول المصطلحات المستخرجة والمصنفة:")
+        st.dataframe(
+            df_res[[
+                "English Term",
+                "Arabic Term",
+                "Sub Domain",
+                "Document Type",
+                "Arabic Description",
+            ]],
+            use_container_width=True,
         )
+
+        excel_buffer = io.BytesIO()
+        excel_df = df_res.drop(columns=["POS"], errors="ignore")
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            excel_df.to_excel(writer, index=False)
+        excel_buffer.seek(0)
+
+        try:
+            pdf_buffer = generate_pdf_cards_bytes(df_res)
+        except Exception as e:
+            pdf_buffer = None
+            st.warning(f"تعذر توليد بطاقات PDF: {e}")
+
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.download_button(
+                label="📥 تنزيل مسرد المصطلحات (Excel)",
+                data=excel_buffer,
+                file_name="Extracted_Legal_Glossary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        with col_d2:
+            if pdf_buffer is not None:
+                st.download_button(
+                    label="📑 تنزيل البطاقات الترجمية (PDF Cards)",
+                    data=pdf_buffer,
+                    file_name="Legal_Terminology_Cards.pdf",
+                    mime="application/pdf",
+                )
 
 # =========================================================
 # 10. التذييل بأسفل الصفحة
